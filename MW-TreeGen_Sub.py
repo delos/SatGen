@@ -22,18 +22,17 @@ import aux
 #---python modules
 import numpy as np
 import time 
-from multiprocessing import Pool, cpu_count
 import sys
 from os import path
 
 ############################# user control ##############################
 
 #---target halo and desired resolution 
-lgM0 = 14.2 - np.log10(cfg.h) # log10(Msun), corresponds to 10^14.2 Msun/h
-cfg.psi_res = 10**-5.0
+lgM0 = 12.0 # log10(Msun)
+cfg.psi_res = 10**-7.0
 z0 = 0.
-lgMres = lgM0 + np.log10(cfg.psi_res) # psi_{res} = 10^-5 by default
-Ntree = 2000
+lgMres = lgM0 + np.log10(cfg.psi_res)
+Ntree = 100
 
 #---orbital parameter sampler preference
 optype =  'zzli' # 'zzli' or 'zentner' or 'jiang'
@@ -53,7 +52,6 @@ print('>>> Generating %i trees for log(M_0)=%.2f at log(M_res)=%.2f...'%\
 time_start = time.time()
 #for itree in range(Ntree):
 def loop(itree): 
-
     """
     Replaces the loop "for itree in range(Ntree):", for parallelization.
     """
@@ -64,7 +62,7 @@ def loop(itree):
 
     time_start_tmp = time.time()
     
-    np.random.seed() # [important!] reseed the random number generator
+    np.random.seed(itree) # [important!] reseed the random number generator
     
     cfg.M0 = 10.**lgM0
     cfg.z0 = z0
@@ -244,9 +242,19 @@ def loop(itree):
         %(itree,Nbranch,k,time_end_tmp-time_start_tmp))
 
 if __name__ == "__main__":
-    Ncores = int(sys.argv[1])
-    pool = Pool(Ncores) # use as many as requested
-    pool.map(loop, range(Ntree), chunksize=1)
+
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    size = comm.Get_size()
+    rank = comm.Get_rank()
+
+    count = int(np.ceil(Ntree / size))
+
+    for i in range(rank*count,(rank+1)*count):
+      if i >= nfiles:
+        break
+      print('[MPI: worker %d on tree %d/%d]'%(rank,i,Ntree),flush=True)
+      loop(i)
 
 time_end = time.time() 
 print('    total time: %5.2f hours'%((time_end - time_start)/3600.))

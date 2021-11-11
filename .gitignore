@@ -6,3 +6,5 @@ FIGURE
 test_*.py
 changelog
 slurm/
+slurm*
+*.sh

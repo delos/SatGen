@@ -297,7 +297,7 @@ def msub(sp,potential,xv,dt,choice='King62',alpha=1.):
     if lt<sp.rh: 
         dm = alpha * (sp.Mh-sp.M(lt)) * dt/pr.tdyn(potential,xv[0],xv[2])
         dm = max(dm,0.) # avoid negative dm
-        if cfg.Mres is not none:
+        if cfg.Mres is not None:
             # Fixed Mres case
             m = max(sp.Mh-dm, cfg.Mres)
         else:
@@ -306,7 +306,7 @@ def msub(sp,potential,xv,dt,choice='King62',alpha=1.):
     else:
         m = sp.Mh
     return m,lt
-def ltidal(sp,potential,xv,choice='King62'):
+def ltidal(sp,potential,xv,choice='King62ax'):
     """
     Tidal radius [kpc] of a satellite, given satellite profile, host
     potential, and phase-space coordinate within the host. 
@@ -336,6 +336,8 @@ def ltidal(sp,potential,xv,choice='King62'):
         rhs = lt_King62_RHS(potential,xv)
     elif choice=='Tormen98':
         rhs = lt_Tormen98_RHS(potential,xv)
+    elif choice=='King62ax':
+        rhs = lt_King62ax_RHS(potential,xv)
     else: 
         sys.exit('Invalid choice of tidal radius type!')
 
@@ -394,6 +396,27 @@ def lt_King62_RHS(potential,xv):
     rho = pr.rho(potential,r)
     dlnMdlnr = cfg.FourPi * r**3 * rho / M
     return (M / r**3) * (2.+Om**2.*r**3/cfg.G/M - dlnMdlnr)
+def lt_King62ax_RHS(potential,xv):
+    """
+    Auxiliary function for 'ltidal', which returns the right-hand side
+    of the King62 equation for tidal radius, as in eq.(12.21) of 
+    Mo, van den Bosch, White 10, but inverted and with all subhalo
+    terms on left-hand side. Axisymmetric version.
+    
+    Syntax:
+    
+        lt_King62ax_RHS(potential,xv)
+    
+    where
+    
+        potential: host potential (a density profile object, or a list of
+            such objects that constitute a composite potential)
+        xv: phase-space coordinates [R,phi,z,VR,Vphi,Vz] in units of 
+            [kpc,radian,kpc,kpc/Gyr,kpc/Gyr,kpc/Gyr] (float array)
+    """
+    Om = Omega(xv)
+    d2Phidr2 = pr.d2Phidr2(potential,xv[0],xv[2])
+    return (Om**2 - d2Phidr2) / cfg.G
 def Findlt(l,sp,rhs):
     """
     Auxiliary function for 'ltidal', which returns the 

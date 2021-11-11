@@ -408,7 +408,7 @@ class NFW(object):
         """
         r = np.sqrt(R**2.+z**2.)
         x = r / self.rs
-       return self.Vmax*1.4393*x**0.354/(1.+1.1756*x**0.725)
+        return self.Vmax*1.4393*x**0.354/(1.+1.1756*x**0.725)
     def sigma_accurate(self,R,z=0.,beta=0.):
         """
         Velocity dispersion [kpc/Gyr].
@@ -2052,7 +2052,7 @@ class MN(object):
                         x**3 - (q**2 + (self.a + x)**2)**(1.5)
                 bottom = x**3 * (q**2 + (self.a + x)**2)**1.5
                 return top / bottom
-            interp_rads = self.a * np.logspace(-3, 3.5, 100)
+            interp_rads = max(self.a,self.b) * np.logspace(-3, 4.5, 115)
             interp_mass = np.zeros(len(interp_rads))
             for i in range(len(interp_rads)):
                 r = interp_rads[i]
