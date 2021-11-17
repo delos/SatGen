@@ -141,6 +141,9 @@ def _rho_Green(R,z,rs,rho0,ch,fb,log10ch,log10fb,gvdb_fp):
     x = r / rs
     return _transfer_Green(x,ch,fb,log10ch,log10fb,gvdb_fp) * rho0 / (x * (1.+x)**2.)
 @njit
+def _r_by_rvir(R,z,rh):
+    return np.sqrt(R**2+z**2) / rh
+@njit
 def _s2_MN(z,b):
     return np.sqrt(z**2 + b**2)
 @njit
@@ -2897,15 +2900,7 @@ class Green(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)       
         """
-        r_by_rvir = np.sqrt(R**2.+z**2.) / self.rh
-        if(isinstance(r_by_rvir, float)):
-            return self._from_interp(r_by_rvir, 'mass')
-        else:
-            # assume array
-            enc_masses = np.zeros(len(r_by_rvir))
-            for i in range(0,len(r_by_rvir)):
-                enc_masses[i] = self._from_interp(r_by_rvir[i], 'mass')
-            return enc_masses
+        return self._from_interp(_r_by_rvir(R,z,self.rh),'mass')
     def _from_interp(self, r_by_rvir, type='mass'):
         """
         Computes the enclosed mass or isotropic velocity dispersion at
@@ -3035,10 +3030,7 @@ class Green(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r) 
         """
-        r = np.sqrt(R**2.+z**2.)
-        r_by_rvir = r / self.rh
-        
-        return self._from_interp(r_by_rvir, 'sigma')
+        return self._from_interp(_r_by_rvir(R,z,self.rh),'sigma')
     def d2Phidr2(self,R,z=0.):
         """
         Second radial derivative of the gravitational potential [1/Gyr^2]
@@ -3055,15 +3047,7 @@ class Green(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)       
         """
-        r_by_rvir = np.sqrt(R**2.+z**2.) / self.rh
-        if(isinstance(r_by_rvir, float)):
-            return self._from_interp(r_by_rvir, 'd2Phidr2')
-        else:
-            # assume array
-            d2Phidr2_vals = np.zeros(len(r_by_rvir))
-            for i in range(0,len(r_by_rvir)):
-                d2Phidr2_vals[i] = self._from_interp(r_by_rvir[i], 'd2Phidr2')
-            return d2Phidr2
+        return self._from_interp(_r_by_rvir(R,z,self.rh),'d2Phidr2')
 
 #--- functions dealing with composite potential (i.e., potential list)---
 
