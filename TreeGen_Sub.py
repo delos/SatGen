@@ -53,7 +53,6 @@ print('>>> Generating %i trees for log(M_0)=%.2f at log(M_res)=%.2f...'%\
 time_start = time.time()
 #for itree in range(Ntree):
 def loop(itree): 
-
     """
     Replaces the loop "for itree in range(Ntree):", for parallelization.
     """

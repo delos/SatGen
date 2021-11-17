@@ -15,6 +15,7 @@ from profiles import ftot
 
 import numpy as np
 from scipy.integrate import ode
+from numba import njit
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -213,6 +214,9 @@ def f(t,y,p,m,sigmamx,Xd):
     R, phi, z, VR, Vphi, Vz = y
     fR, fphi, fz = ftot(p,y,m,sigmamx,Xd)
     R = max(R,1e-6) # safety
+    return _f_helper(R, phi, z, VR, Vphi, Vz, fR, fphi, fz)
+@njit
+def _f_helper(R, phi, z, VR, Vphi, Vz, fR, fphi, fz):
     return [VR, 
         Vphi/R, 
         Vz,

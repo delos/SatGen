@@ -27,10 +27,12 @@ import cosmo as co # for cosmology related functions
 import warnings
 
 import numpy as np
+from numba import njit
 from scipy.optimize import brentq
 from scipy.interpolate import InterpolatedUnivariateSpline
 from scipy.integrate import quad,odeint
-from scipy.special import erf,gamma,gammainc,gammaincc 
+from scipy.special import gamma,gammainc,gammaincc 
+from math import erf
 
 #---variables for NFW mass definition change interpolation
 x_interpolator = None
@@ -61,6 +63,171 @@ def gamma_upper(a,x):
     return gamma(a)*gammaincc(a,x)
 
 #########################################################################
+
+#---numba-accelerated helper functions
+@njit
+def _f_NFW(x):
+    return np.log(1.+x) - x/(1.+x)
+@njit
+def _rho_NFW(R,z,rs,rho0):
+    r = np.sqrt(R**2+z**2)
+    x = r / rs
+    return rho0 / (x * (1.+x)**2.)
+@njit
+def _s_NFW(R,z,rs):
+    r = np.sqrt(R**2+z**2)
+    x = r / rs
+    return 1. + 2*x / (1.+x)
+@njit
+def _M_NFW(R,z,rs,rho0):
+    r = np.sqrt(R**2+z**2)
+    x = r / rs
+    return cfg.FourPi*rho0*rs**3 * _f_NFW(x)
+@njit
+def _rhobar_NFW(R,z,rs,rho0):
+    r = np.sqrt(R**2+z**2)
+    x = r / rs
+    return 3.*rho0 * _f_NFW(x)/x**3
+@njit
+def _tdyn_NFW(R,z,rs,rho0):
+    r = np.sqrt(R**2+z**2)
+    x = r / rs
+    return np.sqrt(cfg.ThreePiOverSixteenG / _rhobar_NFW(R,z,rs,rho0))
+@njit
+def _Phi_NFW(R,z,Phi0,rs):
+    r = np.sqrt(R**2+z**2)
+    x = r / rs
+    return Phi0 * np.log(1.+x)/x
+@njit
+def _fgrav_NFW(R,z,Phi0,rs):
+    r = np.sqrt(R**2+z**2)
+    x = r / rs
+    fac = Phi0 * (_f_NFW(x)/x) / r**2
+    return fac*R, fac*0., fac*z
+@njit
+def _Vcirc_NFW(R,z,Phi0,rs):
+    r = np.sqrt(R**2+z**2)
+    return np.sqrt(r*-_fgrav_NFW(r,0.,Phi0,rs)[0])
+@njit
+def _sigma_NFW(R,z,Vmax,rs):
+    r = np.sqrt(R**2+z**2)
+    x = r / rs
+    return Vmax*1.4393*x**0.354/(1.+1.1756*x**0.725)
+@njit
+def _d2Phidr2_NFW(R,z,Phi0,rs):
+    r = np.sqrt(R**2+z**2)
+    x = r / rs
+    f = (2.*np.log(1. + x) - x*(2. + 3.*x)/(1. + x)**2.) / r**3.
+    return Phi0 * rs * f
+@njit
+def _transfer_Green(x,ch,fb,log10ch,log10fb,gvdb_fp):
+    fte = 10**(gvdb_fp[0] * (ch / 10.)**gvdb_fp[1] * log10fb + gvdb_fp[2] * (1. - fb)**gvdb_fp[3] * log10ch)
+    rte = 10**(log10ch + gvdb_fp[4] * (ch / 10.)**gvdb_fp[5] * log10fb + gvdb_fp[6] * (1. - fb)**gvdb_fp[7] * log10ch) * np.exp(gvdb_fp[8] * (ch / 10.)**gvdb_fp[9] * (1. - fb))
+    delta = 10**(gvdb_fp[10] + gvdb_fp[11]*(ch / 10.)**gvdb_fp[12] * log10fb + gvdb_fp[13] * (1. - fb)**gvdb_fp[14] * log10ch)
+
+    rte = min(rte, ch)
+
+    return fte / (1. + (x * ((ch - rte)/(ch*rte)))**delta)
+@njit
+def _rte_Green(rh,ch,fb,log10ch,log10fb,gvdb_fp):
+    rte = 10**(gvdb_fp[4] * (ch / 10.)**gvdb_fp[5] * log10fb + gvdb_fp[6] * (1. - fb)**gvdb_fp[7] * log10ch) * np.exp(gvdb_fp[8] * (ch / 10.)**gvdb_fp[9] * (1. - fb))
+
+    rte = min(rte, 1.)
+
+    return rte*rh
+@njit
+def _rho_Green(R,z,rs,rho0,ch,fb,log10ch,log10fb,gvdb_fp):
+    r = np.sqrt(R**2+z**2)
+    x = r / rs
+    return _transfer_Green(x,ch,fb,log10ch,log10fb,gvdb_fp) * rho0 / (x * (1.+x)**2.)
+@njit
+def _s2_MN(z,b):
+    return np.sqrt(z**2 + b**2)
+@njit
+def _s1sqr_MN(z,a,b):
+    return (a + _s2_MN(z,b))**2
+@njit
+def _rho_MN(R,z,Md,a,b):
+    Rsqr = R**2
+    s1sqr = _s1sqr_MN(z,a,b)
+    s2 = _s2_MN(z,b)
+    return Md * b**2 * (a*Rsqr+(a+3.*s2)*s1sqr)\
+        / (cfg.FourPi * (Rsqr+s1sqr)**2.5 * s2**3) 
+@njit
+def _M_MN_integrand_1d(z, r, a, b):
+    q = np.sqrt(r**2 - z**2)
+    x = np.sqrt(z**2 + b**2)
+    top = a**3 + a*q**2 + 3.*x*a**2 + 3.*a*x**2 +\
+            x**3 - (q**2 + (a + x)**2)**(1.5)
+    bottom = x**3 * (q**2 + (a + x)**2)**1.5
+    return top / bottom
+@njit
+def _M_MN_interp(R,z,lgrgrid,lgMgrid):
+    f = (0.5*np.log10(R**2+z**2)-lgr_grid[0])/(lgr_grid[-1]-lgr_grid[0]) * (len(lgr_grid)-1)
+    i = int(f)
+    f -= i
+    return 10**(lgM_grid[i] * (1-f) + lgM_grid[i+1] * f)
+@njit
+def _rhobar_MN(R,z,M):
+    r = np.sqrt(R**2+z**2)
+    return 3./(cfg.FourPi*r**3) * M
+@njit
+def _tdyn_MN(R,z,M):
+    return np.sqrt(cfg.ThreePiOverSixteenG / _rhobar_MN(R,z,M))
+@njit
+def _Phi_MN(R,z,GMd,a,b):
+    Rsqr = R**2
+    s1sqr= _s1sqr_MN(z,a,b)
+    return -GMd / np.sqrt(Rsqr+s1sqr)
+@njit
+def _fgrav_MN(R,z,GMd,a,b):
+    Rsqr = R**2
+    s1sqr= _s1sqr_MN(z,a,b)
+    s1 = np.sqrt(s1sqr)
+    s2 = _s2_MN(z,b)
+    fac = -GMd / (Rsqr+s1sqr)**1.5
+    return fac*R, fac*0., fac*z * s1/s2
+@njit
+def _Vcirc_MN(R,z,GMd,a,b):
+    return np.sqrt(-R*_fgrav_MN(R,z,GMd,a,b)[0])
+@njit
+def _sigma_MN(R,z,Md,a,b):
+    Rsqr = R**2
+    s1sqr = _s1sqr_MN(z,a,b)
+    s2 = _s2_MN(z,b)
+    sigmasqr = cfg.G*Md**2 *b**2 /(8.*np.pi*_rho_MN(R,z,Md,a,b))\
+        * s1sqr / ( s2**2 * (Rsqr + s1sqr)**3)
+    return np.sqrt(sigmasqr)
+@njit
+def _Vphi_MN(R,z,Md,a,b):
+    Rsqr = R**2
+    s1sqr = _s1sqr_MN(z,a,b)
+    s2 = _s2_MN(z,b)
+    Vphisqr = cfg.G*Md**2 * a * b**2 / \
+        (cfg.FourPi*_rho_MN(R,z,Md,a,b)) * Rsqr/(s2**3 *(Rsqr+s1sqr)**3)
+    return np.sqrt(Vphisqr)
+@njit
+def _d2Phidr2_MN(R,z,Md,a,b):
+    s1sqr = _s1sqr_MN(z,a,b)
+    s1    = np.sqrt(s1sqr)
+    s2    = _s2_MN(z,b)
+    s2sqr = s2**2
+    R2    = R**2
+    z2    = z**2
+    r     = np.sqrt(R2 + z2)
+
+    d2PhidR2  = (1./(R2 + s1sqr)**1.5) - (3.*R2/(R2 + s1sqr)**2.5)
+    d2PhidRdz =  -3.*R*z*s1/s2/(R2+s1sqr)**2.5
+    d2Phidz2  = (s1/s2/(R2+s1sqr)**1.5)+(z2/s2sqr/(R2+s1sqr)**1.5) - \
+                (3.*z2*s1sqr/s2sqr/(R2+s1sqr)**2.5) - \
+                (z2*s1/s2**3/(R2+s1sqr)**1.5)
+
+    # Jacobian entries found by considering R=rcos(theta), z=rsin(theta)
+    dRdr = R/r
+    dzdr = z/r
+
+    return cfg.G*Md*(d2PhidR2*dRdr**2 + 2.*d2PhidRdz*dRdr*dzdr + \
+                          d2Phidz2*dzdr**2)
 
 #---
 class NFW(object):
@@ -178,7 +345,7 @@ class NFW(object):
         
             x: dimensionless radius r/r_s (float or array)
         """
-        return np.log(1.+x) - x/(1.+x) 
+        return _f_NFW(x) 
     def rho(self,R,z=0.):
         """
         Density [M_sun kpc^-3] at radius r = sqrt(R^2 + z^2). 
@@ -194,9 +361,7 @@ class NFW(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)
         """
-        r = np.sqrt(R**2.+z**2.) 
-        x = r / self.rs
-        return self.rho0 / (x * (1.+x)**2.)
+        return _rho_NFW(R,z,self.rs,self.rho0)
     def s(self,R,z=0.):
         """
         Logarithmic density slope 
@@ -216,9 +381,7 @@ class NFW(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)
         """
-        r = np.sqrt(R**2.+z**2.) 
-        x = r / self.rs
-        return 1. + 2*x / (1.+x)
+        return _s_NFW(R,z,self.rs)
     def M(self,R,z=0.):
         """
         Mass [M_sun] within radius r = sqrt(R^2 + z^2).
@@ -234,9 +397,7 @@ class NFW(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)       
         """
-        r = np.sqrt(R**2.+z**2.)
-        x = r/self.rs
-        return cfg.FourPi*self.rho0*self.rs**3. * self.f(x)
+        return _M_NFW(R,z,self.rs,self.rho0)
     def rhobar(self,R,z=0.):
         """
         Average density [M_sun kpc^-3] within radius r = sqrt(R^2 + z^2). 
@@ -251,9 +412,7 @@ class NFW(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)   
         """
-        r = np.sqrt(R**2.+z**2.)
-        x = r/self.rs
-        return 3.*self.rho0 * self.f(x)/x**3.
+        return _rhobar_NFW(R,z,self.rs,self.rho0)
     def tdyn(self,R,z=0.):
         """
         Dynamical time [Gyr] within radius r = sqrt(R^2 + z^2).
@@ -268,7 +427,7 @@ class NFW(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)     
         """
-        return np.sqrt(cfg.ThreePiOverSixteenG / self.rhobar(R,z))
+        return _tdyn_NFW(R,z,self.rs,self.rho0)
     def Phi(self,R,z=0.):
         """
         Potential [(kpc/Gyr)^2] at radius r = sqrt(R^2 + z^2).
@@ -283,9 +442,7 @@ class NFW(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r) 
         """
-        r = np.sqrt(R**2.+z**2.)
-        x = r/self.rs
-        return self.Phi0 * np.log(1.+x)/x
+        return _Phi_NFW(R,z,self.Phi0,self.rs)
     def otherMassDefinition(self,Delta=200.):
         """
         Computes the mass, radius, and concentration of the fixed,
@@ -364,10 +521,7 @@ class NFW(object):
             phi-component of gravitational acceleration
             z-component of gravitational acceleration
         """
-        r = np.sqrt(R**2.+z**2.)
-        x = r / self.rs   
-        fac = self.Phi0 * (self.f(x)/x) / r**2.
-        return fac*R, fac*0., fac*z
+        return _fgrav_NFW(R,z,self.Phi0,self.rs)
     def Vcirc(self,R,z=0.):
         """
         Circular velocity [kpc/Gyr] at radius r = sqrt(R^2 + z^2).
@@ -383,8 +537,7 @@ class NFW(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r) 
         """
-        r = np.sqrt(R**2.+z**2.)
-        return np.sqrt(r*-self.fgrav(r,0.)[0])
+        return _Vcirc_NFW(R,z,self.Phi0,self.rs)
     def sigma(self,R,z=0.):
         """
         Velocity dispersion [kpc/Gyr] at radius r = sqrt(R^2 + z^2), 
@@ -406,9 +559,7 @@ class NFW(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r) 
         """
-        r = np.sqrt(R**2.+z**2.)
-        x = r / self.rs
-        return self.Vmax*1.4393*x**0.354/(1.+1.1756*x**0.725)
+        return _sigma_NFW(R,z,self.Vmax,self.rs)
     def sigma_accurate(self,R,z=0.,beta=0.):
         """
         Velocity dispersion [kpc/Gyr].
@@ -470,11 +621,7 @@ class NFW(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)       
         """
-        r = np.sqrt(R**2.+z**2.)
-        x = r/self.rs
-
-        f = (2.*np.log(1. + x) - x*(2. + 3.*x)/(1. + x)**2.) / r**3.
-        return self.Phi0 * self.rs * f
+        return _d2Phidr2_NFW(R,z,self.Phi0,self.rs)
         
 class Burkert(object):
     """
@@ -1977,8 +2124,21 @@ class MN(object):
         # supportive attributes repeatedly used by following methods
         self.GMd = cfg.G * self.Md
 
-        # we build the mass profile interpolation lazily
-        self.Minterp = None
+        # we build the mass profile interpolation
+        # cost is currently marginal since only the host may possess a disk
+        build_mass_table()
+
+    def build_mass_table():
+        # table for spherically enclosed mass,
+        # which is not analytical calculable
+        self._interp_rads = max(self.a,self.b) * np.logspace(-3, 4.5, 115)
+        self._interp_mass = np.zeros_like(self._interp_rads)
+        for i,r in enumerate(self._interp_rads):
+            self._interp_mass[i] = quad(_M_MN_integrand_1d, 0, r, args=(r,self.a,self.b))[0]
+        self._interp_mass *= (-1. * self.b**2 * self.Md)
+        self._interp_lgr = np.log10(self._interp_rads)
+        self._interp_lgM = np.log10(self._interp_mass)
+        self.Minterp = lambda R,z: _M_MN_interp(R,z,self._interp_lgr,self._interp_lgM)
 
     def s1sqr(self,z):
         """
@@ -1992,7 +2152,7 @@ class MN(object):
         
             z: z-coordinate [kpc] (float or array)
         """
-        return (self.a + self.s2(z))**2.
+        return _s1sqr_MN(z,self.a,self.b)
     def s2(self,z):
         """
         Auxilary method that computes zeta = sqrt(z^2+b^2) at height z.
@@ -2005,7 +2165,7 @@ class MN(object):
         
             z: z-coordinate [kpc] (float or array)
         """
-        return np.sqrt(z**2. + self.b**2)             
+        return _s2_MN(z,self.b)
     def rho(self,R,z=0.):
         """
         Density [M_sun kpc^-3] at (R,z).
@@ -2021,11 +2181,7 @@ class MN(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)
         """
-        Rsqr = R**2.
-        s1sqr = self.s1sqr(z)
-        s2 = self.s2(z)
-        return self.Md * self.b**2. * (self.a*Rsqr+(self.a+3.*s2)*s1sqr)\
-            / (cfg.FourPi * (Rsqr+s1sqr)**2.5 * s2**3.) 
+        return _rho_MN(R,z,self.Md,self.a,self.b)
     def M(self,R,z=0.):
         """
         Mass [M_sun] within spherical radius r = sqrt(R^2 + z^2).
@@ -2041,28 +2197,7 @@ class MN(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)  
         """
-        if not self.Minterp:
-            # lazy-build interpolator for spherically enclosed mass,
-            # which is not analytical calculable
-            # define the function, integrate it, interpolate
-            def integrand_1d(z, r):
-                q = np.sqrt(r**2 - z**2)
-                x = np.sqrt(z**2 + self.b**2)
-                top = self.a**3 + self.a*q**2 + 3.*x*self.a**2 + 3.*self.a*x**2 +\
-                        x**3 - (q**2 + (self.a + x)**2)**(1.5)
-                bottom = x**3 * (q**2 + (self.a + x)**2)**1.5
-                return top / bottom
-            interp_rads = max(self.a,self.b) * np.logspace(-3, 4.5, 115)
-            interp_mass = np.zeros(len(interp_rads))
-            for i in range(len(interp_rads)):
-                r = interp_rads[i]
-                interp_mass[i] = quad(lambda z: integrand_1d(z, r), 0, r)[0]
-            interp_mass *= (-1. * self.b**2 * self.Md)
-            self.Minterp = InterpolatedUnivariateSpline(np.log10(interp_rads),
-                                                        np.log10(interp_mass))
-
-        r = np.sqrt(R**2.+z**2.) 
-        return 10.**self.Minterp(np.log10(r))
+        return self._M_MN_interp(R,z,self._interp_lgr,self._interp_lgM)
     def rhobar(self,R,z=0.):
         """
         Average density [M_sun kpc^-3] within radius r = sqrt(R^2 + z^2). 
@@ -2078,8 +2213,8 @@ class MN(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)      
         """
-        r = np.sqrt(R**2.+z**2.)
-        return 3./(cfg.FourPi*r**3.) * self.M(R,z) 
+        M = self._M_MN_interp(R,z,self._interp_lgr,self._interp_lgM)
+        return _rhobar_MN(R,z,M)
     def tdyn(self,R,z=0.):
         """
         Dynamical time [Gyr] within radius r = sqrt(R^2 + z^2).
@@ -2095,7 +2230,8 @@ class MN(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)      
         """
-        return np.sqrt(cfg.ThreePiOverSixteenG / self.rhobar(R,z)) 
+        M = self._M_MN_interp(R,z,self._interp_lgr,self._interp_lgM)
+        return _tdyn_MN(R,z,M)
     def Phi(self,R,z=0.):
         """
         Potential [(kpc/Gyr)^2] at (R,z).
@@ -2110,9 +2246,7 @@ class MN(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r) 
         """
-        Rsqr = R**2.
-        s1sqr= self.s1sqr(z)
-        return -self.GMd / np.sqrt(Rsqr+s1sqr)
+        return _Phi_MN(R,z,self.GMd,self.a,self.b)
     def fgrav(self,R,z):
         """
         gravitational acceleration [(kpc/Gyr)^2 kpc^-1] at location (R,z)
@@ -2136,12 +2270,7 @@ class MN(object):
             phi-component of gravitational acceleration
             z-component of gravitational acceleration
         """
-        Rsqr = R**2.
-        s1sqr= self.s1sqr(z)   
-        s1 = np.sqrt(s1sqr)
-        s2 = self.s2(z)
-        fac = -self.GMd / (Rsqr+s1sqr)**1.5
-        return fac*R, fac*0., fac*z * s1/s2
+        return _fgrav_MN(R,z,self.GMd,self.a,self.b)
     def Vcirc(self,R,z=0.):
         """
         Circular velocity [kpc/Gyr] at (R,z=0.), defined as 
@@ -2162,7 +2291,7 @@ class MN(object):
         the speed of a satellite on a circular orbit, and for a disk 
         potential, a circular orbit is only possible at z=0. 
         """
-        return np.sqrt(R*-self.fgrav(R,z)[0])
+        return _Vcirc_MN(R,z,self.GMd,self.a,self.b)
     def sigma(self,R,z=0.):
         """
         Velocity dispersion [kpc/Gyr] at (R,z), following 
@@ -2185,12 +2314,7 @@ class MN(object):
         isotropy, then it is also the phi-direction velocity dispersion.
         (See CP96 eqs 11-17 for more.)
         """
-        Rsqr = R**2.
-        s1sqr = self.s1sqr(z)
-        s2 = self.s2(z)
-        sigmasqr = cfg.G*self.Md**2 *self.b**2 /(8.*np.pi*self.rho(R,z))\
-            * s1sqr / ( s2**2. * (Rsqr + s1sqr)**3.)
-        return np.sqrt(sigmasqr)
+        return _sigma_MN(R,z,self.Md,self.a,self.b)
     def Vphi(self,R,z=0):
         """
         The mean azimuthal velocity [kpc/Gyr] at (R,z), following 
@@ -2213,12 +2337,7 @@ class MN(object):
             
         Note that we have made the assumption of isotropy. 
         """
-        Rsqr = R**2.
-        s1sqr = self.s1sqr(z)
-        s2 = self.s2(z)
-        Vphisqr = cfg.G*self.Md**2 *self.a *self.b**2 / \
-            (cfg.FourPi*self.rho(R,z)) * Rsqr/(s2**3. *(Rsqr+s1sqr)**3.)
-        return np.sqrt(Vphisqr)
+        return _Vphi_MN(R,z,self.Md,self.a,self.b)
     def d2Phidr2(self,R,z=0):
         """
         Second radial derivative of the gravitational potential [1/Gyr^2]
@@ -2235,26 +2354,7 @@ class MN(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)       
         """
-        s1sqr = self.s1sqr(z)
-        s1    = np.sqrt(s1sqr)
-        s2    = self.s2(z)
-        s2sqr = s2**2.
-        R2    = R**2.
-        z2    = z**2.
-        r     = np.sqrt(R2 + z2)
-
-        d2PhidR2  = (1./(R2 + s1sqr)**1.5) - (3.*R2/(R2 + s1sqr)**2.5)
-        d2PhidRdz =  -3.*R*z*s1/s2/(R2+s1sqr)**2.5
-        d2Phidz2  = (s1/s2/(R2+s1sqr)**1.5)+(z2/s2sqr/(R2+s1sqr)**1.5) - \
-                    (3.*z2*s1sqr/s2sqr/(R2+s1sqr)**2.5) - \
-                    (z2*s1/s2**3./(R2+s1sqr)**1.5)
-
-        # Jacobian entries found by considering R=rcos(theta), z=rsin(theta)
-        dRdr = R/r
-        dzdr = z/r
-
-        return cfg.G*self.Md*(d2PhidR2*dRdr**2. + 2.*d2PhidRdz*dRdr*dzdr + \
-                              d2Phidz2*dzdr**2.)
+        return _d2Phidr2_MN(R,z,self.Md,self.a,self.b)
 
 class Hernquist(object):
     """
@@ -2715,14 +2815,7 @@ class Green(object):
 
             x: dimensionless radius r/r_s (float or array)
         """
-
-        fte = 10**(cfg.gvdb_fp[0] * (self.ch / 10.)**cfg.gvdb_fp[1] * self.log10fb + cfg.gvdb_fp[2] * (1. - self.fb)**cfg.gvdb_fp[3] * self.log10ch)
-        rte = 10**(self.log10ch + cfg.gvdb_fp[4] * (self.ch / 10.)**cfg.gvdb_fp[5] * self.log10fb + cfg.gvdb_fp[6] * (1. - self.fb)**cfg.gvdb_fp[7] * self.log10ch) * np.exp(cfg.gvdb_fp[8] * (self.ch / 10.)**cfg.gvdb_fp[9] * (1. - self.fb))
-        delta = 10**(cfg.gvdb_fp[10] + cfg.gvdb_fp[11]*(self.ch / 10.)**cfg.gvdb_fp[12] * self.log10fb + cfg.gvdb_fp[13] * (1. - self.fb)**cfg.gvdb_fp[14] * self.log10ch)
-
-        rte = min(rte, self.ch)
-
-        return fte / (1. + (x * ((self.ch - rte)/(self.ch*rte)))**delta)
+        return _transfer_Green(x,self.ch,self.fb,self.log10ch,self.log10fb,cfg.gvdb_fp)
 
     def rte(self):
         """
@@ -2735,12 +2828,7 @@ class Green(object):
             .rte()
 
         """
-
-        rte = 10**(cfg.gvdb_fp[4] * (self.ch / 10.)**cfg.gvdb_fp[5] * self.log10fb + cfg.gvdb_fp[6] * (1. - self.fb)**cfg.gvdb_fp[7] * self.log10ch) * np.exp(cfg.gvdb_fp[8] * (self.ch / 10.)**cfg.gvdb_fp[9] * (1. - self.fb))
-
-        rte = min(rte, 1.)
-
-        return rte*self.rh
+        return _rte_Green(self.rh,self.ch,self.fb,self.log10ch,self.log10fb,cfg.gvdb_fp)
 
     def update_mass(self, Mnew):
         """
@@ -2777,7 +2865,7 @@ class Green(object):
         
             x: dimensionless radius r/r_s (float or array)
         """
-        return np.log(1.+x) - x/(1.+x) 
+        return _f_NFW(x) 
     def rho(self,R,z=0.):
         """
         Density [M_sun kpc^-3] at radius r = sqrt(R^2 + z^2). 
@@ -2793,9 +2881,7 @@ class Green(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)
         """
-        r = np.sqrt(R**2.+z**2.) 
-        x = r / self.rs
-        return self.transfer(x) * self.rho0 / (x * (1.+x)**2.)
+        return _rho_Green(R,z,self.rs,self.rho0,self.ch,self.fb,self.log10ch,self.log10fb,cfg.gvdb_fp)
     def M(self,R,z=0.):
         """
         Mass [M_sun] within radius r = sqrt(R^2 + z^2).
@@ -2837,36 +2923,25 @@ class Green(object):
         """
 
         if(type == 'mass'):
-            interp = cfg.fb_cs_interps_mass
+            tab = cfg.gvdb_mm
             phys_unit_mult = self.Minit
         elif(type == 'sigma'):
-            interp = cfg.fb_cs_interps_sigma
+            tab = cfg.gvdb_sm
             phys_unit_mult = self.sigma0
         elif(type == 'd2Phidr2'):
-            interp = cfg.fb_cs_interps_d2Phidr2
-            phys_unit_mult = cfg.G * self.Minit / self.rh**3.
+            tab = cfg.gvdb_pm
+            phys_unit_mult = self.d2Phidr2_unit
         else:
             sys.exit("Invalid interpolation type specified!")
 
         if(r_by_rvir < cfg.rv_min):
             warnings.warn("A radius value r/rvir=%.2e is smaller than the interpolator bound in %s!" % (r_by_rvir, type))
             r_by_rvir = cfg.rv_min
-        elif(r_by_rvir > cfg.rv_max):
+        elif(r_by_rvir > cfg.rv_max - cfg.eps):
             warnings.warn("A radius value r/rvir=%.2e is larger than the interpolator bound in %s!" % (r_by_rvir, type))
-            r_by_rvir = cfg.rv_max
-        
-        # determine which slices in r-space we lie between
-        ind_high = np.searchsorted(cfg.r_vals_int, r_by_rvir)
-        ind_low = ind_high - 1
+            r_by_rvir = cfg.rv_max - cfg.eps
 
-        # compute mass given f_b, c on each of the two planes in r
-        val1 = interp[ind_low](self.log10fb, self.log10ch)
-        val2 = interp[ind_high](self.log10fb, self.log10ch)
-
-        # linearly interpolate between the two planes
-        val = val1 + (val2 - val1) * (r_by_rvir - cfg.r_vals_int[ind_low]) / (cfg.r_vals_int[ind_high] - cfg.r_vals_int[ind_low])
-
-        return val[0][0] * phys_unit_mult
+        return cfg.gvdb_interp(self.log10fb, self.log10ch, r_by_rvir, tab) * phys_unit_mult
     def rhobar(self,R,z=0.):
         """
         Average density [M_sun kpc^-3] within radius r = sqrt(R^2 + z^2). 
@@ -3383,44 +3458,50 @@ def fDF(potential,xv,m):
     #
     R, phi, z, VR, Vphi, Vz = xv
     #
-    fac = -cfg.FourPiGsqr * m # common factor in f_DF 
     sR = 0. # sum of R-component of DF accelerations 
     sphi = 0. # ... phi- ...
     sz = 0. # ... z- ...
     for p in potential:
-        if isinstance(p,(MN,)): # i.e., if component p is a disk
-            lnL = 0.5
-            #lnL = 0.0 # <<< test: turn off disk's DF 
-            VrelR = VR
-            Vrelphi = Vphi - p.Vphi(R,z)
-            Vrelz = Vz
-        else: # i.e., if component p is a spherical component
-            if(cfg.lnL_type == 0):
-                lnL = np.log(p.Mh/m)
-            elif(cfg.lnL_type == 1):
-                lnL = np.log(1. + p.Mh/m)
-            elif(cfg.lnL_type == 2):
-                lnL = 2.
-            elif(cfg.lnL_type == 3):
-                lnL = 2.5
-            elif(cfg.lnL_type == 4):
-                lnL = 3.
-            elif(cfg.lnL_type == 5):
-                lnL = np.log(p.M(R, z) / m)
-            VrelR = VR
-            Vrelphi = Vphi
-            Vrelz = Vz
-        Vrel = np.sqrt(VrelR**2.+Vrelphi**2.+Vrelz**2.)
-        Vrel = max(Vrel,cfg.eps) # safety
-        X = Vrel / (cfg.Root2 * p.sigma(R,z))
-        fac_s = p.rho(R,z) * (cfg.lnL_pref * lnL) * ( erf(X) - \
-            cfg.TwoOverRootPi*X*np.exp(-X**2.) ) / Vrel**3 
-        #fac_s = 2.*fac_s # <<< test: enhance DF by a factor of 2
-        #fac_s = 0.5*fac_s # <<< test: weaken DF by half
-        sR += fac_s * VrelR 
-        sphi += fac_s * Vrelphi 
-        sz += fac_s * Vrelz 
-    return fac*sR, fac*sphi, fac*sz
+        disk = isinstance(p,(MN,))
+
+        if disk:
+            _sR, _sphi, _sz = _fDF_helper(m,None,VR,Vphi-p.Vphi(R,z),Vz,disk,p.rho(R,z),p.sigma(R,z),cfg.lnL_type,cfg.lnL_pref)
+        else:
+            if cfg.lnL_type == 5:
+                M = p.M(R, z)
+            else:
+                M = p.Mh
+            _sR, _sphi, _sz = _fDF_helper(m,M,VR,Vphi,Vz,disk,p.rho(R,z),p.sigma(R,z),cfg.lnL_type,cfg.lnL_pref)
+        sR += _sR
+        sphi += _sphi
+        sz += _sz
+
+    return sR, sphi, sz
+@njit
+def _fDF_helper(m,M,VrelR,Vrelphi,Vrelz,disk,rho,sigma,lnL_type,lnL_pref):
+
+    if disk:
+        lnL = 0.5
+    elif(lnL_type == 0):
+        lnL = np.log(M/m)
+    elif(lnL_type == 1):
+        lnL = np.log(1. + M/m)
+    elif(lnL_type == 2):
+        lnL = 2.
+    elif(lnL_type == 3):
+        lnL = 2.5
+    elif(lnL_type == 4):
+        lnL = 3.
+    elif(lnL_type == 5):
+        lnL = np.log(M/m)
+        
+    Vrel = np.sqrt(VrelR**2.+Vrelphi**2.+Vrelz**2.)
+    Vrel = max(Vrel,cfg.eps) # safety
+    X = Vrel / (cfg.Root2 * sigma)
+    fac_s = -cfg.FourPiGsqr * m * rho * (lnL_pref * lnL) * ( erf(X) - \
+        cfg.TwoOverRootPi*X*np.exp(-X**2.) ) / Vrel**3 
+
+    return fac_s * VrelR, fac_s * Vrelphi, fac_s * Vrelz
 
 def fRP(potential,xv,sigmamx,Xd=1.):
     """

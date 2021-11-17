@@ -29,10 +29,10 @@ from os import path
 
 #---target halo and desired resolution 
 lgM0 = 12.0 # log10(Msun)
-cfg.psi_res = 10**-7.0
+cfg.psi_res = 1e-5#10**-7.0
 z0 = 0.
 lgMres = lgM0 + np.log10(cfg.psi_res)
-Ntree = 100
+Ntree = 1
 
 #---orbital parameter sampler preference
 optype =  'zzli' # 'zzli' or 'zentner' or 'jiang'
@@ -167,39 +167,51 @@ def loop(itree):
         Rv = np.array(Rv)
         Nc = len(c2) # length of a branch over which c2 is computed 
         
-        
-        # use the redshift id and parent-branch id to access the parent
-        # branch's information at our current branch's accretion epoch,
-        # in order to initialize the orbit
-        if ip==-1: # i.e., if the branch is the main branch
-            xv = np.zeros(6)
-        else:
+        if ip==-1 or mass[ip,iz[0]] >= 0.:
+            
+            # use the redshift id and parent-branch id to access the parent
+            # branch's information at our current branch's accretion epoch,
+            # in order to initialize the orbit
+            if ip==-1: # i.e., if the branch is the main branch
+                xv = np.zeros(6)
+            else:
+                Mp  = mass[ip,iz[0]]
+                c2p = concentration[ip,iz[0]]
+                hp  = NFW(Mp,c2p,Delta=cfg.Dvsample[iz[0]],z=zsample[0])
+                if(optype == 'zentner'):
+                    eps = 1./np.pi*np.arccos(1.-2.*np.random.random())
+                    xv  = init.orbit(hp,xc=1.,eps=eps)
+                elif(optype == 'zzli'):
+                    vel_ratio, gamma = init.ZZLi2020(hp, Msample[0], zsample[0])
+                    xv = init.orbit_from_Li2020(hp, vel_ratio, gamma)
+                elif(optype == 'jiang'):
+                    sp = NFW(Msample[0],c2[0],Delta=cfg.Dvsample[iz[0]],z=zsample[0])
+                    xv = init.orbit_from_Jiang2015(hp,sp,zsample[0])
+            
+            # <<< test
+            #print('    id=%6i,k=%2i,z[0]=%7.2f,log(M[0])=%7.2f,c=%7.2f,a=%7.2f,c2=%7.2f,log(Ms)=%7.2f,Re=%7.2f,xv=%7.2f,%7.2f,%7.2f,%7.2f,%7.2f,%7.2f'%\
+            #    (id,k,z[0],np.log10(M[0]),c[0],a[0],c2[0],np.log10(Ms),Re, xv[0],xv[1],xv[2],xv[3],xv[4],xv[5]))
+            
+            # update the arrays for output
+            mass[id,iz] = Msample
+            order[id,iz] = k
+            ParentID[id,iz] = ip
+            
+            VirialRadius[id,iz[0]:iz[0]+Nc] = Rv
+            concentration[id,iz[0]:iz[0]+Nc] = c2
+            
+            coordinates[id,iz[0],:] = xv
+        elif iz[0] < cfg.Nz - 1:
+            mass[id,iz] = Msample
+            order[id,iz] = k
+            ParentID[id,iz] = ip
+            
+            VirialRadius[id,iz[0]:iz[0]+Nc] = Rv
+            concentration[id,iz[0]:iz[0]+Nc] = c2
             Mp  = mass[ip,iz[0]]
             c2p = concentration[ip,iz[0]]
-            hp  = NFW(Mp,c2p,Delta=cfg.Dvsample[iz[0]],z=zsample[0])
-            if(optype == 'zentner'):
-                eps = 1./np.pi*np.arccos(1.-2.*np.random.random())
-                xv  = init.orbit(hp,xc=1.,eps=eps)
-            elif(optype == 'zzli'):
-                vel_ratio, gamma = init.ZZLi2020(hp, Msample[0], zsample[0])
-                xv = init.orbit_from_Li2020(hp, vel_ratio, gamma)
-            elif(optype == 'jiang'):
-                sp = NFW(Msample[0],c2[0],Delta=cfg.Dvsample[iz[0]],z=zsample[0])
-                xv = init.orbit_from_Jiang2015(hp,sp,zsample[0])
-        
-        # <<< test
-        #print('    id=%6i,k=%2i,z[0]=%7.2f,log(M[0])=%7.2f,c=%7.2f,a=%7.2f,c2=%7.2f,log(Ms)=%7.2f,Re=%7.2f,xv=%7.2f,%7.2f,%7.2f,%7.2f,%7.2f,%7.2f'%\
-        #    (id,k,z[0],np.log10(M[0]),c[0],a[0],c2[0],np.log10(Ms),Re, xv[0],xv[1],xv[2],xv[3],xv[4],xv[5]))
-        
-        # update the arrays for output
-        mass[id,iz] = Msample
-        order[id,iz] = k
-        ParentID[id,iz] = ip
-        
-        VirialRadius[id,iz[0]:iz[0]+Nc] = Rv
-        concentration[id,iz[0]:iz[0]+Nc] = c2
-        
-        coordinates[id,iz[0],:] = xv
+            if np.max(Msample) > 0:
+                raise ValueError('itree=%d, id=%d, ip=%d, iz=%d, Mp=%e, c2p=%f'%(itree,id,ip,iz[0],Mp,c2p) + '\n' + ' '.join([str(m) for m in mass[ip,:]]) + '\n' + ' '.join([str(m) for m in mass[id,:]]))
                 
         # Check if all the level-k branches have been dealt with: if so, 
         # i.e., if ik==Nk, proceed to the next level.
@@ -251,7 +263,7 @@ if __name__ == "__main__":
     count = int(np.ceil(Ntree / size))
 
     for i in range(rank*count,(rank+1)*count):
-      if i >= nfiles:
+      if i >= Ntree:
         break
       print('[MPI: worker %d on tree %d/%d]'%(rank,i,Ntree),flush=True)
       loop(i)

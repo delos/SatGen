@@ -17,10 +17,13 @@ import cosmolopy.density as cden
 import cosmolopy.constants as cc
 import cosmolopy.perturbation as cper
 
+from numba import njit, vectorize, float64
+
 #########################################################################
 
 #---basics 
 
+@njit
 def rhoc(z,h=0.7,Om=0.3,OL=0.7):
     """
     Critical density [Msun kpc^-3] at redshift z.
@@ -44,6 +47,7 @@ def rhoc(z,h=0.7,Om=0.3,OL=0.7):
     """
     return cfg.rhoc0 * h**2 * (Om*(1.+z)**3 + OL)
     
+@njit
 def rhom(z,h=0.7,Om=0.3,OL=0.7):
     """
     Mean density [Msun kpc^-3] at redshift z.
@@ -67,6 +71,7 @@ def rhom(z,h=0.7,Om=0.3,OL=0.7):
     """
     return Omega(z,Om,OL) * rhoc(z,h,Om,OL)
     
+@njit
 def DeltaBN(z,Om=0.3,OL=0.7):
     """
     Virial overdensity of Bryan & Norman (1998).
@@ -86,6 +91,7 @@ def DeltaBN(z,Om=0.3,OL=0.7):
     x = Omega(z,Om,OL) - 1.
     return 18.*np.pi**2 + 82.*x - 39.*x**2
 
+@njit
 def Omega(z,Om=0.3,OL=0.7):
     """
     Matter density in units of the critical density, at redshift z.
@@ -105,6 +111,7 @@ def Omega(z,Om=0.3,OL=0.7):
     fac = Om * (1.+z)**3
     return fac / (fac + OL)
 
+@njit
 def tdyn(z,h=0.7,Om=0.3,OL=0.7):
     """
     Halo dynamical time [Gyr] defined as
@@ -158,6 +165,8 @@ def Ndyn(z1,z2,h=0.7,Om=0.3,OL=0.7):
     """
     return quad(dNdz, z1,z2, args=(h,Om,OL,),
         epsabs=1.e-7, epsrel=1.e-6,limit=10000)[0]
+
+@njit
 def dNdz(z,h,Om,OL):
     r"""
     Auxiliary function for the function Ndyn -- the integrand, dN/dz(z),
@@ -184,6 +193,8 @@ def dNdz(z,h,Om,OL):
             (default=0.7) 
     """
     return dtdz(z,h,Om,OL) / tdyn(z,h,Om,OL)
+
+@njit
 def dtdz(z,h,Om,OL):
     """
     complementary function for computing N_dyn, it returns
@@ -196,6 +207,7 @@ def dtdz(z,h,Om,OL):
     t2 = t(z2,h,Om,OL)
     return (t1-t2) / (z1-z2)
 
+@njit
 def H(z,h=0.7,Om=0.3,OL=0.7):
     """
     Hubble constant [Gyr^-1] at redshift z.
@@ -219,6 +231,7 @@ def H(z,h=0.7,Om=0.3,OL=0.7):
     """
     return (h/9.778) * np.sqrt( Om*(1.+z)**3 + OL )
 
+@njit
 def E(z,Om=0.3,OL=0.7):
     """
     Hubble constant at redshift z in units of the Hubble constant at z=0.
@@ -238,7 +251,8 @@ def E(z,Om=0.3,OL=0.7):
             (default=0.7) 
     """
     return np.sqrt( Om*(1.+z)**3 + OL )
-    
+
+@njit
 def t(z,h=0.7,Om=0.3,OL=0.7):
     r"""
     Cosmic time [Gyr] (time since Big Bang).
@@ -264,6 +278,7 @@ def t(z,h=0.7,Om=0.3,OL=0.7):
     return (9.778/h) * 2./(3.*np.sqrt(OL)) * \
         np.log((np.sqrt(fac)+np.sqrt(fac+Om)) / np.sqrt(Om))
 
+@njit
 def tlkbk(z,h=0.7,Om=0.3,OL=0.7):
     """
     Lookback time [Gyr] at redshift z.
@@ -298,6 +313,7 @@ def tlkbk(z,h=0.7,Om=0.3,OL=0.7):
 #   They all depend on the CosmoloPy library, and thus are grouped here. 
 
 # critical overdensity for collapse
+@njit
 def deltac(z,Om=0.3):
     """
     Critical linearized overdensity for spherical collapse.
@@ -313,7 +329,8 @@ def deltac(z,Om=0.3):
             (default=0.3) 
     """
     return 1.686 / D(z,Om)
-def D(z,Om=0.3):
+@njit
+def D(z,Om=0.3,unnormed=False):
     """
     Linear growth rate D(z).
     
@@ -327,7 +344,17 @@ def D(z,Om=0.3):
         Om: matter density in units of the critical density, at z=0
             (default=0.3) 
     """
-    return cper.fgrowth(z,Om) 
+    omega = Omega(z,Om,1.-Om)
+    lamb = 1 - omega
+    a = 1/(1 + z)
+
+    if unnormed:
+        norm = 1.0
+    else:
+        norm = 1.0 / D(0.0, Om, unnormed=True)
+    return (norm * (5./2.) * a * omega /
+            (omega**(4./7.) - lamb + (1. + omega/2.) * (1. + lamb/70.))
+            )
 
 # transfer function    
 def T(k, **cosmo):
@@ -526,16 +553,17 @@ def sigmaM(M,**cosmo):
     
         the sqrt of the variance, i.e., sigma(M) (float) 
     """
-    h = cosmo['h']
-    Om = cosmo['omega_M_0']
-    OL = cosmo['omega_lambda_0']
     if cosmo['MassVarianceChoice']==0:
+        h = cosmo['h']
+        Om = cosmo['omega_M_0']
+        OL = cosmo['omega_lambda_0']
         rho=rhom(0.,h,Om,OL) # [Msun kpc^-3]
         R = ( M / rho / cfg.FourPiOverThree )**(1./3.) # [kpc]
         R = R / 1000. * h # sigmaR takes R in [Mpc/h]
         return sigmaR(R,**cosmo)
     else:
-        return cfg.sigmalgM_interp(np.log10(M))
+        #return cfg.sigmalgM_interp(np.log10(M))
+        return cfg.sigmaM_interp(M)
 sigmaM_vec = np.vectorize(sigmaM, doc="Vectorized 'sigmaM'")
 
 # peak height
@@ -562,6 +590,26 @@ def nu(M,z=0,**cosmo):
     return 1.686 / sigma(M,z,**cosmo)
 
 # Parkinson+08 algorithm  
+'''
+Global variables:
+    cfg.W0
+    cfg.qres
+    cfg.sigmares
+    cfg.sigma0
+    cfg.sigmah
+    cfg.S0
+    cfg.Sh
+    cfg.alphah
+    cfg.ures
+    cfg.beta 
+    cfg.B
+    cfg.mu
+    cfg.eta
+    cfg.NupperOverdW
+    cfg.dW
+    cfg.M0
+    cfg.z0
+'''
 
 def dlnSdlnM(M,**cosmo):
     """
@@ -601,10 +649,20 @@ def dlnsigmadlnM(M,**cosmo):
     Note that the Parkinson+08 alpha(M) factor is the absolute value,
     i.e., the negative, of this function.
     """
+    if cosmo['MassVarianceChoice']==0:
+        M1 = (1.+cfg.eps)*M
+        M2 = (1.-cfg.eps)*M
+        sigma1 = sigma(M1,0.,**cosmo)
+        sigma2 = sigma(M2,0.,**cosmo)
+        return (np.log(sigma1) - np.log(sigma2))/(np.log(M1) - np.log(M2))
+    else:
+        return dlnsigmadlnM_interp(M)
+@njit
+def dlnsigmadlnM_interp(M):
     M1 = (1.+cfg.eps)*M
     M2 = (1.-cfg.eps)*M
-    sigma1 = sigma(M1,0.,**cosmo)
-    sigma2 = sigma(M2,0.,**cosmo)
+    sigma1 = cfg.sigmaM_interp(M1)
+    sigma2 = cfg.sigmaM_interp(M2)
     return (np.log(sigma1) - np.log(sigma2))/(np.log(M1) - np.log(M2))
 
 def UpdateGlobalVariables(**cosmo):
@@ -620,30 +678,38 @@ def UpdateGlobalVariables(**cosmo):
     
         cosmo: cosmological parameters (dictionary defined in config.py)    
     """
-    cfg.W0 = deltac(cfg.z0,cosmo['omega_M_0'])
-    if cfg.M0>cfg.Mres:
-        cfg.qres = min(cfg.Mres/cfg.M0,0.499) # 0.499 is a safety
-    else:
-        cfg.qres = min(cfg.Mmin/cfg.M0,0.499)
-    cfg.sigmares = sigma(cfg.qres*cfg.M0,0.,**cosmo)
-    cfg.sigma0 = sigma(cfg.M0,0.,**cosmo)
-    cfg.sigmah = sigma(0.5*cfg.M0,0.,**cosmo)
-    cfg.S0 = cfg.sigma0**2
-    cfg.Sh = cfg.sigmah**2
-    Sres = cfg.sigmares**2
-    cfg.alphah = -dlnsigmadlnM(0.5*cfg.M0,**cosmo)
-    cfg.ures = cfg.sigma0/np.sqrt(Sres-cfg.S0)
-    Vres = Sres / (Sres - cfg.S0)**1.5
-    Vh = cfg.Sh / (cfg.Sh - cfg.S0)**1.5
-    cfg.beta = np.log(Vres/Vh) / np.log(2.*cfg.qres)
-    cfg.B = 2.0**cfg.beta * Vh
-    cfg.mu = cfg.alphah if cfg.gamma1>=0. else \
-        - np.log(cfg.sigmares/cfg.sigmah) / np.log(2.*cfg.qres)
-    cfg.eta = cfg.beta - 1. - cfg.gamma1*cfg.mu
+
+    cfg.W0, cfg.qres, cfg.sigmares, cfg.sigma0, cfg.sigmah, cfg.S0, cfg.Sh, cfg.alphah, cfg.ures, cfg.beta, cfg.B, cfg.mu, cfg.eta = _UpdateGlobalVariables(cosmo['omega_M_0'],cfg.z0,cfg.M0,cfg.Mres,cfg.Mmin)
+
     cfg.NupperOverdW = NupperOverdW()
     cfg.dW = dW()
+
+@njit
+def _UpdateGlobalVariables(Om,z0,M0,Mres,Mmin,):
+    W0 = deltac(z0,Om)
+    if M0>Mres:
+        qres = min(Mres/M0,0.499) # 0.499 is a safety
+    else:
+        qres = min(Mmin/M0,0.499)
+    sigmares = cfg.sigmaM_interp(qres*M0)
+    sigma0 = cfg.sigmaM_interp(M0)
+    sigmah = cfg.sigmaM_interp(0.5*M0)
+    S0 = sigma0**2
+    Sh = sigmah**2
+    Sres = sigmares**2
+    alphah = -dlnsigmadlnM_interp(0.5*M0)
+    ures = sigma0/np.sqrt(Sres-S0)
+    Vres = Sres / (Sres - S0)**1.5
+    Vh = Sh / (Sh - S0)**1.5
+    beta = np.log(Vres/Vh) / np.log(2.*qres)
+    B = 2.0**beta * Vh
+    mu = alphah if cfg.gamma1>=0. else \
+        - np.log(sigmares/sigmah) / np.log(2.*qres)
+    eta = beta - 1. - cfg.gamma1*mu
+    return W0, qres, sigmares, sigma0, sigmah, S0, Sh, alphah, ures, beta, B, mu, eta
    
-def R(q,**cosmo): 
+@njit
+def R(q,M0,S0,alphah,B,beta,mu,sigmah): 
     """
     The factor 
     
@@ -653,24 +719,23 @@ def R(q,**cosmo):
     
     Syntax:
         
-        R(q,**cosmo)
+        R(q,...)
     
     where
         
         q: M_1 / M_0, where M_1 is the mass of a progenitor of M_0
             (float or array)
-        cosmo: cosmological parameters (dictionary defined in config.py)
+        ...: cosmological parameters
         
-    Note that this function uses global variables.
     On 2021-05-04, we add the Benson+21 modification to the "V" factor.
     """
-    M1 = q*cfg.M0
-    S1 = sigma(M1,0.,**cosmo)**2
-    V = S1 / (S1 - cfg.S0)**1.5
-    V = V * (1.- cfg.S0/S1)**cfg.gamma3 # <<< Benson+21 modification
-    fac1 = -dlnsigmadlnM(M1,**cosmo) / cfg.alphah
-    fac2 = V / (cfg.B * q**cfg.beta)
-    fac3=((2.*q)**cfg.mu *sigma(M1,0.,**cosmo)/cfg.sigmah)**cfg.gamma1
+    M1 = q*M0
+    S1 = cfg.sigmaM_interp(M1)**2
+    V = S1 / (S1 - S0)**1.5
+    V = V * (1.- S0/S1)**cfg.gamma3 # <<< Benson+21 modification
+    fac1 = -dlnsigmadlnM_interp(M1) / alphah
+    fac2 = V / (B * q**beta)
+    fac3=((2.*q)**mu *cfg.sigmaM_interp(M1)/sigmah)**cfg.gamma1
     Rtmp = fac1 * fac2 * fac3
     #if Rtmp>1.0: # <<< a safety check, may remove if turned out useless
     #    print("Warning: R(q=%g)=%g>1, fac1=%g,fac2=%g,fac3=%g"%\
@@ -704,18 +769,22 @@ def NupperOverdW():
         
     Note that this function uses global variables.
     """
-    A = cfg.Root2OverPi * cfg.B * cfg.alphah * cfg.G0 \
-        / 2.**(cfg.mu*cfg.gamma1) * (cfg.W0/cfg.sigma0)**cfg.gamma2 \
-        * (cfg.sigmah/cfg.sigma0)**cfg.gamma1 # this is the Parkinson+08
+    return _NupperOverdW(cfg.B,cfg.alphah,cfg.mu,cfg.W0,cfg.sigma0,cfg.sigmah,cfg.qres,cfg.eta)
+@njit
+def _NupperOverdW(B,alphah,mu,W0,sigma0,sigmah,qres,eta):
+    A = cfg.Root2OverPi * B * alphah * cfg.G0 \
+        / 2.**(mu*cfg.gamma1) * (W0/sigma0)**cfg.gamma2 \
+        * (sigmah/sigma0)**cfg.gamma1 # this is the Parkinson+08
         # S(q) in Eq.(A2) apart from the factor q^(eta-1).  
-    if cfg.qres>=(0.5-cfg.eps):
+    if qres>=(0.5-cfg.eps):
         I = cfg.eps
     else:
-        if np.abs(cfg.eta)>cfg.eps:
-            I = (0.5**cfg.eta - cfg.qres**cfg.eta)/cfg.eta
+        if np.abs(eta)>cfg.eps:
+            I = (0.5**eta - qres**eta)/eta
         else:
-            I = - np.log(2.*cfg.qres)
+            I = - np.log(2.*qres)
     return A * I
+
 
 def J(ures):
     r"""
@@ -731,6 +800,7 @@ def J(ures):
     """
     return quad(dJdu,0.,ures,epsabs=1e-7,epsrel=1e-6,limit=50)[0]
 J_vec = np.vectorize(J, doc="Vectorized 'J(u_res)' function")
+@njit
 def dJdu(u):
     """
     Integrand of J.
@@ -739,19 +809,19 @@ def dJdu(u):
     """
     return (1.+1./u**2)**(cfg.gamma1/2.)
     
-def F():
+@njit
+def F(ures,sigma0,W0,dW):
     """
     The smooth accretion fraction, M_smooth / M_0, during a timestep dW,
     as in Parkinson+08 eq.(A6).
     
     Syntax:
     
-        F()
+        F(...)
     
-    Note that this function uses global variables.
     """
-    return min(0.5, cfg.Root2OverPi * cfg.Jures_interp(cfg.ures) * \
-           cfg.G0/cfg.sigma0 * (cfg.W0/cfg.sigma0)**cfg.gamma2 * cfg.dW)
+    return min(0.5, cfg.Root2OverPi * cfg.Jures_interp(ures) * \
+           cfg.G0/sigma0 * (W0/sigma0)**cfg.gamma2 * dW)
            
 def DrawProgenitors(**cosmo):
     """
@@ -771,27 +841,28 @@ def DrawProgenitors(**cosmo):
         mass of secondary progenitor (float, =0. if only one progenitor),
         number of progenitors (int, either 1 or 2)
     """
-    r1 = np.random.random()
-    Nupper = cfg.NupperOverdW * cfg.dW
+    r1,r2,r3 = np.random.random(3)
+    return _DrawProgenitors(r1,r2,r3,cfg.NupperOverdW,cfg.dW,cfg.M0,cfg.qres,cfg.eta,cfg.ures,cfg.sigma0,cfg.W0,cfg.S0,cfg.alphah,cfg.B,cfg.beta,cfg.mu,cfg.sigmah,cfg.Mres)
+@njit
+def _DrawProgenitors(r1,r2,r3,NupperOverdW,dW,M0,qres,eta,ures,sigma0,W0,S0,alphah,B,beta,mu,sigmah,Mres):
+    Nupper = NupperOverdW * dW
     Np = 0 # initialize
     if r1 > Nupper:
-        M1 = cfg.M0 * (1.-F())
+        M1 = M0 * (1.-F(ures,sigma0,W0,dW))
         M2 = 0.
     else:
-        r2 = np.random.random()
-        q = (cfg.qres**cfg.eta + \
-            r2*(2.**(-cfg.eta) - cfg.qres**cfg.eta))**(1./cfg.eta)
-        r3 = np.random.random()
-        if (r3<R(q,**cosmo)):
-            Mtmp1 = cfg.M0 * (1.-F()-q)
-            Mtmp2 = cfg.M0 * q
+        q = (qres**eta + \
+            r2*(2.**(-eta) - qres**eta))**(1./eta)
+        if (r3<R(q,M0,S0,alphah,B,beta,mu,sigmah)):
+            Mtmp1 = M0 * (1.-F(ures,sigma0,W0,dW)-q)
+            Mtmp2 = M0 * q
             M1 = max(Mtmp1,Mtmp2)
             M2 = min(Mtmp1,Mtmp2)
         else:
-            M1 = cfg.M0 * (1.-F()) 
+            M1 = M0 * (1.-F(ures,sigma0,W0,dW)) 
             M2 = 0.
-    if M1>cfg.Mres: Np += 1
-    if M2>cfg.Mres: Np += 1
+    if M1>Mres: Np += 1
+    if M2>Mres: Np += 1
     return M1,M2,Np
 
 # EPS conditional mass function & progenitor mass function

@@ -16,7 +16,8 @@
 import cosmo as co
 
 import numpy as np
-from scipy.interpolate import interp1d, RectBivariateSpline, splrep
+from numba import njit, vectorize, float64
+from scipy.interpolate import interp1d, splrep
 
 ########################## user control #################################
 
@@ -135,6 +136,12 @@ print('>>> Tabulating sigma(M,z=0) ...')
 lgM_grid  = np.linspace(1.,17.,1000)
 sigma_grid = co.sigma(10.**lgM_grid,z=0.,**cosmo)
 sigmalgM_interp = interp1d(lgM_grid, sigma_grid, kind='linear')
+@vectorize([float64(float64)],nopython=True)
+def sigmaM_interp(M):
+    f = (np.log10(M)-lgM_grid[0])/(lgM_grid[-1]-lgM_grid[0]) * (len(lgM_grid)-1)
+    i = int(f)
+    f -= i
+    return sigma_grid[i] * (1-f) + sigma_grid[i+1] * f
 cosmo['MassVarianceChoice'] = 1 
 print('    From now on, sigma(M,z) is computed by interpolation.')
 
@@ -172,9 +179,17 @@ print('    Number of output redshifts = %4i, up to z = %5.2f'\
     %(Nz,zsample.max()))
     
 print('>>> Tabulating Parkinson+08 J(u_res) ...')
-ures_grid = np.logspace(-6.,6.,1000)
+lgures_grid = np.linspace(-6.,6.,1000)
+ures_grid = 10**lgures_grid
 J_grid = co.J_vec(ures_grid)
-Jures_interp = interp1d(ures_grid, J_grid, kind='linear')
+@vectorize([float64(float64)],nopython=True)
+def Jures_interp(ures):
+    f = (np.log10(ures)-lgures_grid[0])/(lgures_grid[-1]-lgures_grid[0]) * (len(lgures_grid)-1)
+    i = int(f)
+    #f -= i
+    f = (ures - ures_grid[i]) / (ures_grid[i+1] - ures_grid[i])
+    return J_grid[i] * (1-f) + J_grid[i+1] * f
+#Jures_interp = interp1d(ures_grid, J_grid, kind='linear')
 
 # for Green and van den Bosch (2019) transfer function
 gvdb_fp = np.array([ 3.37821658e-01, -2.21730464e-04,  1.56793984e-01,
@@ -187,18 +202,23 @@ gvdb_fp = np.array([ 3.37821658e-01, -2.21730464e-04,  1.56793984e-01,
 print('>>> Building interpolation grid for Green+19 M(<r|f_b,c)...')
 print('>>> Building interpolation grid for Green+19 sigma(r|f_b,c)...')
 print('>>> Building interpolation grid for Green+19 d2Phidr2(r|f_b,c)...')
+
 gvdb_mm = np.load('etc/gvdb_mm.npy')
 gvdb_sm = np.load('etc/gvdb_sm.npy')
 gvdb_pm = np.load('etc/gvdb_pm.npy')
-nfb = 100
-nr = 131
-ncs = 30
-fb_vals_int = np.logspace(-5, 0, nfb)
+
+nfb = 160
+nr = 171
+ncs = 40
+
+fb_vals_int = np.logspace(-8, 0, nfb)
+r_vals_int = np.logspace(-7.5, 2., nr)
+cs_vals_int = np.geomspace(1, 140, ncs)
+
 # NOTE: This approach implicitly assumes that DASH concentrations correspond
 # to virial concentrations, and hence that DASH truncates at the BN98 virial
 # radius.
-r_vals_int = np.logspace(-5.5, 1., nr)
-cs_vals_int = np.logspace(0, np.log10(40), ncs)
+
 fbv_min = np.min(fb_vals_int) # Same as phi_{res} in paper; fiducial of 10^-5
 assert phi_res >= fbv_min, "phi_res can't be smaller than fbv_min=10^-5"
 fbv_max = np.max(fb_vals_int)
@@ -209,22 +229,37 @@ csv_max = np.max(cs_vals_int)
 log_fb_vals_int = np.log10(fb_vals_int)
 log_r_vals_int = np.log10(r_vals_int)
 log_cs_vals_int = np.log10(cs_vals_int)
-fb_cs_interps_mass = []
-fb_cs_interps_sigma = []
-fb_cs_interps_d2Phidr2 = []
-# TODO: Decide if switching to linear-space from log-space gives
-# a speed-up sufficiently worth it..?
-for i in range(0, nr):
-    fb_cs_interps_mass.append(RectBivariateSpline(log_fb_vals_int,
-                                                  log_cs_vals_int,
-                                                  gvdb_mm[:,:,i]))
-    fb_cs_interps_sigma.append(RectBivariateSpline(log_fb_vals_int,
-                                                   log_cs_vals_int,
-                                                   gvdb_sm[:,:,i]))
-    fb_cs_interps_d2Phidr2.append(RectBivariateSpline(log_fb_vals_int,
-                                                      log_cs_vals_int,
-                                                      gvdb_pm[:,:,i]))
 
+#@vectorize([float64(float64,float64,float64)],nopython=True)
+@njit
+def gvdb_interp(log10fb,log10cs,r,gvdb_tab):
+    f = (log10fb-log_fb_vals_int[0])/(log_fb_vals_int[-1]-log_fb_vals_int[0]) * (nfb-1)
+    i = int(f)
+    f -= i
+
+    g = (log10cs-log_cs_vals_int[0])/(log_cs_vals_int[-1]-log_cs_vals_int[0]) * (ncs-1)
+    j = int(g)
+    g -= j
+
+    h = (np.log10(r)-log_r_vals_int[0])/(log_r_vals_int[-1]-log_r_vals_int[0]) * (nr-1)
+    k = int(h)
+    h -= k
+
+    ret = 0.
+
+    ret += (1-f)*(1-g)*(1-h) * gvdb_tab[ i , j , k ]
+
+    ret +=   f  *(1-g)*(1-h) * gvdb_tab[i+1, j , k ]
+    ret += (1-f)*  g  *(1-h) * gvdb_tab[ i ,j+1, k ]
+    ret += (1-f)*(1-g)*  h   * gvdb_tab[ i , j ,k+1]
+
+    ret += (1-f)*  g  *  h   * gvdb_tab[ i ,j+1,k+1]
+    ret +=   f  *(1-g)*  h   * gvdb_tab[i+1, j ,k+1]
+    ret +=   f  *  g  *(1-h) * gvdb_tab[i+1,j+1, k ]
+    
+    ret +=   f  *  g  *  h   * gvdb_tab[i+1,j+1,k+1]
+    
+    return ret
 
 # Jiang+15 subhalo orbital model parameters (Table 2)
 # rows correspond to host mass (i.e., peak height)
