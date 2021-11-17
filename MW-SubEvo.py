@@ -48,7 +48,7 @@ cfg.lnL_pref = 0.75 # Fiducial, but can also use 1.0
 
 #---evolution mode (resolution limit in m/m_{acc} or m/M_0)
 cfg.evo_mode = 'arbres' # or 'withering'
-cfg.phi_res = 10**-7.0 # when cfg.evo_mode == 'arbres',
+cfg.phi_res = 1e-7 # when cfg.evo_mode == 'arbres',
 #                        cfg.phi_res sets the lower limit in m/m_{acc}
 #                        that subhaloes evolve down until
 

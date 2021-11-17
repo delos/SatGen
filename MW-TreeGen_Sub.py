@@ -29,10 +29,10 @@ from os import path
 
 #---target halo and desired resolution 
 lgM0 = 12.0 # log10(Msun)
-cfg.psi_res = 1e-5#10**-7.0
+cfg.psi_res = 1e-7
 z0 = 0.
 lgMres = lgM0 + np.log10(cfg.psi_res)
-Ntree = 1
+Ntree = 120
 
 #---orbital parameter sampler preference
 optype =  'zzli' # 'zzli' or 'zentner' or 'jiang'

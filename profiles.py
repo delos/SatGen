@@ -24,7 +24,6 @@
 
 import config as cfg # for global variables
 import cosmo as co # for cosmology related functions
-import warnings
 
 import numpy as np
 from numba import njit
@@ -2928,13 +2927,6 @@ class Green(object):
             phys_unit_mult = self.d2Phidr2_unit
         else:
             sys.exit("Invalid interpolation type specified!")
-
-        if(r_by_rvir < cfg.rv_min):
-            warnings.warn("A radius value r/rvir=%.2e is smaller than the interpolator bound in %s!" % (r_by_rvir, type))
-            r_by_rvir = cfg.rv_min
-        elif(r_by_rvir > cfg.rv_max - cfg.eps):
-            warnings.warn("A radius value r/rvir=%.2e is larger than the interpolator bound in %s!" % (r_by_rvir, type))
-            r_by_rvir = cfg.rv_max - cfg.eps
 
         return cfg.gvdb_interp(self.log10fb, self.log10ch, r_by_rvir, tab) * phys_unit_mult
     def rhobar(self,R,z=0.):

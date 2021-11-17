@@ -233,6 +233,19 @@ log_cs_vals_int = np.log10(cs_vals_int)
 #@vectorize([float64(float64,float64,float64)],nopython=True)
 @njit
 def gvdb_interp(log10fb,log10cs,r,gvdb_tab):
+    if log10fb < log_fb_vals_int[0]:
+        log10fb = log_fb_vals_int[0]
+    elif log10fb > log_fb_vals_int[-1] - eps:
+        log10fb = log_fb_vals_int[-1] - eps
+    if log10cs < log_cs_vals_int[0]:
+        log10cs = log_cs_vals_int[0]
+    elif log10cs > log_cs_vals_int[-1] - eps:
+        log10cs = log_cs_vals_int[-1] - eps
+    if r < r_vals_int[0]:
+        r = r_vals_int[0]
+    elif r > r_vals_int[-1] - eps:
+        r = r_vals_int[-1] - eps
+
     f = (log10fb-log_fb_vals_int[0])/(log_fb_vals_int[-1]-log_fb_vals_int[0]) * (nfb-1)
     i = int(f)
     f -= i
