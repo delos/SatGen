@@ -165,7 +165,12 @@ def _M_MN_integrand_1d(z, r, a, b):
     return top / bottom
 @njit
 def _M_MN_interp(R,z,lgrgrid,lgMgrid):
-    f = (0.5*np.log10(R**2+z**2)-lgr_grid[0])/(lgr_grid[-1]-lgr_grid[0]) * (len(lgr_grid)-1)
+    lgr = 0.5*np.log10(R**2+z**2)
+    if lgr < lgr_grid[0]:
+        lgr = lgr_grid[0]
+    if lgr > lgr_grid[-1]-cfg.eps:
+        lgr = lgr_grid[-1]-cfg.eps
+    f = (lgr-lgr_grid[0])/(lgr_grid[-1]-lgr_grid[0]) * (len(lgr_grid)-1)
     i = int(f)
     f -= i
     return 10**(lgM_grid[i] * (1-f) + lgM_grid[i+1] * f)

@@ -29,7 +29,7 @@ from os import path
 
 #---target halo and desired resolution 
 lgM0 = 12.0 # log10(Msun)
-cfg.psi_res = 1e-7
+cfg.psi_res = 1e-6
 z0 = 0.
 lgMres = lgM0 + np.log10(cfg.psi_res)
 Ntree = 120
@@ -41,7 +41,7 @@ optype =  'zzli' # 'zzli' or 'zentner' or 'jiang'
 conctype = 'zhao' # 'zhao' or 'vdb'
 
 #---for output
-outfile1 = './OUTPUT_TREE/tree%i_lgM%.2f.npz' #%(itree,lgM0)
+outfile1 = './OUTPUT_TREE_%.1e/'%(cfg.psi_res) + 'tree%i_lgM%.2f.npz' #%(itree,lgM0)
 
 ############################### compute #################################
 
@@ -201,17 +201,6 @@ def loop(itree):
             concentration[id,iz[0]:iz[0]+Nc] = c2
             
             coordinates[id,iz[0],:] = xv
-        elif iz[0] < cfg.Nz - 1:
-            mass[id,iz] = Msample
-            order[id,iz] = k
-            ParentID[id,iz] = ip
-            
-            VirialRadius[id,iz[0]:iz[0]+Nc] = Rv
-            concentration[id,iz[0]:iz[0]+Nc] = c2
-            Mp  = mass[ip,iz[0]]
-            c2p = concentration[ip,iz[0]]
-            if np.max(Msample) > 0:
-                raise ValueError('itree=%d, id=%d, ip=%d, iz=%d, Mp=%e, c2p=%f'%(itree,id,ip,iz[0],Mp,c2p) + '\n' + ' '.join([str(m) for m in mass[ip,:]]) + '\n' + ' '.join([str(m) for m in mass[id,:]]))
                 
         # Check if all the level-k branches have been dealt with: if so, 
         # i.e., if ik==Nk, proceed to the next level.

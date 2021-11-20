@@ -199,9 +199,7 @@ gvdb_fp = np.array([ 3.37821658e-01, -2.21730464e-04,  1.56793984e-01,
                     -3.37271922e-01, -9.91000445e-02,  4.14500861e-01])
 
 # for computing enclosed mass within Green and van den Bosch (2019)
-print('>>> Building interpolation grid for Green+19 M(<r|f_b,c)...')
-print('>>> Building interpolation grid for Green+19 sigma(r|f_b,c)...')
-print('>>> Building interpolation grid for Green+19 d2Phidr2(r|f_b,c)...')
+print('>>> Building interpolation grid for Green+19 profile...')
 
 gvdb_mm = np.load('etc/gvdb_mm.npy')
 gvdb_sm = np.load('etc/gvdb_sm.npy')

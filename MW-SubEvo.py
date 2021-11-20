@@ -35,9 +35,6 @@ warnings.simplefilter("ignore", UserWarning)
 ########################### user control ################################
 
 
-datadir = "./OUTPUT_TREE/"
-outdir = "./OUTPUT_SAT/"
-
 Rres_factor = 10**-3 # (Defunct)
 
 #---stripping efficiency type
@@ -48,9 +45,13 @@ cfg.lnL_pref = 0.75 # Fiducial, but can also use 1.0
 
 #---evolution mode (resolution limit in m/m_{acc} or m/M_0)
 cfg.evo_mode = 'arbres' # or 'withering'
-cfg.phi_res = 1e-7 # when cfg.evo_mode == 'arbres',
+cfg.phi_res = 1e-6 # when cfg.evo_mode == 'arbres',
 #                        cfg.phi_res sets the lower limit in m/m_{acc}
 #                        that subhaloes evolve down until
+
+cfg.psi_res = 1e-6
+datadir = './OUTPUT_TREE_%.1e/'%(cfg.psi_res)
+outdir = './OUTPUT_SAT_%.1e/'%(cfg.phi_res)
 
 ########################### evolve satellites ###########################
 
@@ -61,6 +62,7 @@ for filename in os.listdir(datadir):
         files.append(os.path.join(datadir, filename))
 files.sort()
 
+print(files)
 
 print('>>> Evolving subhaloes ...')
 
