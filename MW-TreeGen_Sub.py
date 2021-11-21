@@ -25,11 +25,14 @@ import time
 import sys
 from os import path
 
+from sys import argv
+
 ############################# user control ##############################
 
 #---target halo and desired resolution 
 lgM0 = 12.0 # log10(Msun)
-cfg.psi_res = 1e-6
+try: cfg.psi_res = float(argv[1])
+except: cfg.psi_res = 1e-5
 z0 = 0.
 lgMres = lgM0 + np.log10(cfg.psi_res)
 Ntree = 120
@@ -86,7 +89,7 @@ def loop(itree):
     
     mass = np.zeros((cfg.Nmax,cfg.Nz)) - 99.
     order = np.zeros((cfg.Nmax,cfg.Nz),np.int8) - 99
-    ParentID = np.zeros((cfg.Nmax,cfg.Nz),np.int16) - 99
+    ParentID = np.zeros((cfg.Nmax,cfg.Nz),np.int32) - 99
     
     VirialRadius = np.zeros((cfg.Nmax,cfg.Nz),np.float32) - 99.
     concentration = np.zeros((cfg.Nmax,cfg.Nz),np.float32) - 99.
@@ -191,6 +194,17 @@ def loop(itree):
             # <<< test
             #print('    id=%6i,k=%2i,z[0]=%7.2f,log(M[0])=%7.2f,c=%7.2f,a=%7.2f,c2=%7.2f,log(Ms)=%7.2f,Re=%7.2f,xv=%7.2f,%7.2f,%7.2f,%7.2f,%7.2f,%7.2f'%\
             #    (id,k,z[0],np.log10(M[0]),c[0],a[0],c2[0],np.log10(Ms),Re, xv[0],xv[1],xv[2],xv[3],xv[4],xv[5]))
+
+            # lengthen output arrays if needed
+            if id > mass.shape[0] - 1:
+                mass = np.concatenate((mass, np.zeros((cfg.Nmax,cfg.Nz)) - 99.), axis=0)
+                order = np.concatenate((order, np.zeros((cfg.Nmax,cfg.Nz),np.int8) - 99), axis=0)
+                ParentID = np.concatenate((ParentID, np.zeros((cfg.Nmax,cfg.Nz),np.int32) - 99), axis=0)
+
+                VirialRadius = np.concatenate((VirialRadius, np.zeros((cfg.Nmax,cfg.Nz),np.float32) - 99.), axis=0)
+                concentration = np.concatenate((concentration, np.zeros((cfg.Nmax,cfg.Nz),np.float32) - 99.), axis=0)
+
+                coordinates = np.concatenate((coordinates, np.zeros((cfg.Nmax,cfg.Nz,6),np.float32)), axis=0)
             
             # update the arrays for output
             mass[id,iz] = Msample

@@ -34,6 +34,8 @@ import warnings
 #warnings.simplefilter('always', UserWarning)
 warnings.simplefilter("ignore", UserWarning)
 
+from sys import argv
+
 ########################### user control ################################
 
 
@@ -47,7 +49,8 @@ cfg.lnL_pref = 0.75 # Fiducial, but can also use 1.0
 
 #---evolution mode (resolution limit in m/m_{acc} or m/M_0)
 cfg.evo_mode = 'arbres' # or 'withering'
-cfg.phi_res = 1e-5 # when cfg.evo_mode == 'arbres',
+try: cfg.phi_res = float(argv[2])
+except: cfg.phi_res = 1e-5 # when cfg.evo_mode == 'arbres',
 #                        cfg.phi_res sets the lower limit in m/m_{acc}
 #                        that subhaloes evolve down until
 
@@ -56,8 +59,11 @@ disk_f = [4.1e-2,1.9e-2,0.9e-2] # mass fraction
 disk_a = [2.5,7.0,0.0] # scale radius (0 yields 3D distribution)
 disk_b = [0.35,0.08,0.5] # scale height
 
+try: cfg.psi_res = float(argv[1])
+except: cfg.psi_res = 1e-5 # only sets input data directory
+
 datadir = './OUTPUT_TREE_%.1e/'%(cfg.psi_res)
-outdir = './OUTPUT_SAT_%.1e_DISK/'%(cfg.psi_res)
+outdir = './OUTPUT_SAT_%.1e_%.1e_DISK/'%(cfg.psi_res,cfg.phi_res)
 
 ########################### evolve satellites ###########################
 
@@ -243,7 +249,7 @@ def loop(file):
                         # NOTE: No use integrating orbit any longer once the halo
                         # is disrupted, this just slows it down
                     
-                        tdyn = p.tdyn(r)
+                        tdyn = pr.tdyn(p,r)
                         o.integrate(t,p,m_old)
                         xv = o.xv # note that the coordinates are updated 
                         # internally in the orbit instance "o" when calling
@@ -254,7 +260,7 @@ def loop(file):
                         # no need for orbit integration; to avoid potential 
                         # numerical issues, we assign a dummy coordinate that 
                         # is almost zero but not exactly zero
-                        tdyn = p.tdyn(cfg.Rres)
+                        tdyn = pr.tdyn(p,cfg.Rres)
                         xv = np.array([cfg.Rres,0.,0.,0.,0.,0.])
 
                     r = np.sqrt(xv[0]**2+xv[2]**2)
@@ -370,8 +376,8 @@ def loop(file):
                             rsd = brentq(lambda r: pr.M(potentials[id],r)-Ms,rs*0.01,rs*10)
                             chd = rvir / rsd
 
-                            print('z=%.2f: c_host = %.2f -> %.2f -> %.2f [eff: %.2f]'%(
-                                   z,concentration[id,iz],c1,c2,chd),flush=True)
+                            #print('z=%.2f: c_host = %.2f -> %.2f -> %.2f [eff: %.2f]'%(
+                            #       z,concentration[id,iz],c1,c2,chd),flush=True)
 
                         else:
 
@@ -416,18 +422,16 @@ if __name__ == "__main__":
     size = comm.Get_size()
     rank = comm.Get_rank()
 
-    np.random.seed(85126)
-    files_perm = np.random.permutation(files)
-    nfiles = len(files_perm)
+    nfiles = len(files)
 
     count = int(np.ceil(nfiles / size))
 
     for i in range(rank*count,(rank+1)*count):
       if i >= nfiles:
         break
-      print('[MPI: worker %d on file %d/%d: %s]'%(rank,i,nfiles,files_perm[i]),flush=True)
+      print('[MPI: worker %d on file %d/%d: %s]'%(rank,i,nfiles,files[i]),flush=True)
       np.random.seed(i+85127)
-      loop(files_perm[i])
+      loop(files[i])
 
 time_end = time.time() 
 print('    total time: %5.2f hours'%((time_end - time_start)/3600.))

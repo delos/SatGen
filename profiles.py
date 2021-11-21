@@ -164,7 +164,7 @@ def _M_MN_integrand_1d(z, r, a, b):
     bottom = x**3 * (q**2 + (a + x)**2)**1.5
     return top / bottom
 @njit
-def _M_MN_interp(R,z,lgrgrid,lgMgrid):
+def _M_MN(R,z,lgr_grid,lgM_grid):
     lgr = 0.5*np.log10(R**2+z**2)
     if lgr < lgr_grid[0]:
         lgr = lgr_grid[0]
@@ -175,12 +175,13 @@ def _M_MN_interp(R,z,lgrgrid,lgMgrid):
     f -= i
     return 10**(lgM_grid[i] * (1-f) + lgM_grid[i+1] * f)
 @njit
-def _rhobar_MN(R,z,M):
+def _rhobar_MN(R,z,lgr_grid,lgM_grid):
+    M = _M_MN(R,z,lgr_grid,lgM_grid)
     r = np.sqrt(R**2+z**2)
     return 3./(cfg.FourPi*r**3) * M
 @njit
-def _tdyn_MN(R,z,M):
-    return np.sqrt(cfg.ThreePiOverSixteenG / _rhobar_MN(R,z,M))
+def _tdyn_MN(R,z,lgr_grid,lgM_grid):
+    return np.sqrt(cfg.ThreePiOverSixteenG / _rhobar_MN(R,z,lgr_grid,lgM_grid))
 @njit
 def _Phi_MN(R,z,GMd,a,b):
     Rsqr = R**2
@@ -2133,9 +2134,9 @@ class MN(object):
 
         # we build the mass profile interpolation
         # cost is currently marginal since only the host may possess a disk
-        build_mass_table()
+        self.build_mass_table()
 
-    def build_mass_table():
+    def build_mass_table(self):
         # table for spherically enclosed mass,
         # which is not analytical calculable
         self._interp_rads = max(self.a,self.b) * np.logspace(-3, 4.5, 115)
@@ -2145,7 +2146,7 @@ class MN(object):
         self._interp_mass *= (-1. * self.b**2 * self.Md)
         self._interp_lgr = np.log10(self._interp_rads)
         self._interp_lgM = np.log10(self._interp_mass)
-        self.Minterp = lambda R,z: _M_MN_interp(R,z,self._interp_lgr,self._interp_lgM)
+        self.Minterp = lambda R,z: _M_MN(R,z,self._interp_lgr,self._interp_lgM)
 
     def s1sqr(self,z):
         """
@@ -2204,7 +2205,7 @@ class MN(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)  
         """
-        return self._M_MN_interp(R,z,self._interp_lgr,self._interp_lgM)
+        return _M_MN(R,z,self._interp_lgr,self._interp_lgM)
     def rhobar(self,R,z=0.):
         """
         Average density [M_sun kpc^-3] within radius r = sqrt(R^2 + z^2). 
@@ -2220,8 +2221,7 @@ class MN(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)      
         """
-        M = self._M_MN_interp(R,z,self._interp_lgr,self._interp_lgM)
-        return _rhobar_MN(R,z,M)
+        return _rhobar_MN(R,z,self._interp_lgr,self._interp_lgM)
     def tdyn(self,R,z=0.):
         """
         Dynamical time [Gyr] within radius r = sqrt(R^2 + z^2).
@@ -2237,8 +2237,7 @@ class MN(object):
                 (default=0., i.e., if z is not specified otherwise, the 
                 first argument R is also the halo-centric radius r)      
         """
-        M = self._M_MN_interp(R,z,self._interp_lgr,self._interp_lgM)
-        return _tdyn_MN(R,z,M)
+        return _tdyn_MN(R,z,self._interp_lgr,self._interp_lgM)
     def Phi(self,R,z=0.):
         """
         Potential [(kpc/Gyr)^2] at (R,z).
@@ -3188,8 +3187,14 @@ def rhobar(potential,R,z=0.):
     
         rhobar([halo,disk],R,z) 
     """
-    r = np.sqrt(R**2.+z**2.)
-    return 3./(cfg.FourPi*r**3.) * M(potential,R,z)
+    if not isinstance(potential, list): # if potential is not composite,
+        # make it a list of only one element, such that the code below
+        # works for both a single potential and a composite potential
+        potential = [potential] 
+    sum = 0.
+    for p in potential:
+        sum += p.rhobar(R,z)
+    return sum
 
 def tdyn(potential,R,z=0.):
     """
@@ -3446,7 +3451,7 @@ def fDF(potential,xv,m):
         disk = isinstance(p,(MN,))
 
         if disk:
-            _sR, _sphi, _sz = _fDF_helper(m,None,VR,Vphi-p.Vphi(R,z),Vz,disk,p.rho(R,z),p.sigma(R,z),cfg.lnL_type,cfg.lnL_pref)
+            _sR, _sphi, _sz = _fDF_helper(m,0.,VR,Vphi-p.Vphi(R,z),Vz,disk,p.rho(R,z),p.sigma(R,z),cfg.lnL_type,cfg.lnL_pref)
         else:
             if cfg.lnL_type == 5:
                 M = p.M(R, z)

@@ -32,6 +32,8 @@ import warnings
 #warnings.simplefilter('always', UserWarning)
 warnings.simplefilter("ignore", UserWarning)
 
+from sys import argv
+
 ########################### user control ################################
 
 
@@ -45,13 +47,16 @@ cfg.lnL_pref = 0.75 # Fiducial, but can also use 1.0
 
 #---evolution mode (resolution limit in m/m_{acc} or m/M_0)
 cfg.evo_mode = 'arbres' # or 'withering'
-cfg.phi_res = 1e-6 # when cfg.evo_mode == 'arbres',
+try: cfg.phi_res = float(argv[2])
+except: cfg.phi_res = 1e-5 # when cfg.evo_mode == 'arbres',
 #                        cfg.phi_res sets the lower limit in m/m_{acc}
 #                        that subhaloes evolve down until
 
-cfg.psi_res = 1e-6
+try: cfg.psi_res = float(argv[1])
+except: cfg.psi_res = 1e-5 # only sets input data directory
+
 datadir = './OUTPUT_TREE_%.1e/'%(cfg.psi_res)
-outdir = './OUTPUT_SAT_%.1e/'%(cfg.phi_res)
+outdir = './OUTPUT_SAT_%.1e_%.1e/'%(cfg.psi_res,cfg.phi_res)
 
 ########################### evolve satellites ###########################
 
@@ -162,6 +167,7 @@ def loop(file):
                             # this is an extremely uncommon event, but should
                             # eventually be fixed
                             continue
+                            
 
                         potentials[id] = Green(ma,c2a,Delta=Dva,z=za)
                         orbits[id] = orbit(xva)
@@ -367,18 +373,16 @@ if __name__ == "__main__":
     size = comm.Get_size()
     rank = comm.Get_rank()
 
-    np.random.seed(85126)
-    files_perm = np.random.permutation(files)
-    nfiles = len(files_perm)
+    nfiles = len(files)
 
     count = int(np.ceil(nfiles / size))
 
     for i in range(rank*count,(rank+1)*count):
       if i >= nfiles:
         break
-      print('[MPI: worker %d on file %d/%d: %s]'%(rank,i,nfiles,files_perm[i]),flush=True)
+      print('[MPI: worker %d on file %d/%d: %s]'%(rank,i,nfiles,files[i]),flush=True)
       np.random.seed(i+85127)
-      loop(files_perm[i])
+      loop(files[i])
 
 time_end = time.time() 
 print('    total time: %5.2f hours'%((time_end - time_start)/3600.))
