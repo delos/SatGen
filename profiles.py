@@ -2144,8 +2144,14 @@ class MN(object):
         for i,r in enumerate(self._interp_rads):
             self._interp_mass[i] = quad(_M_MN_integrand_1d, 0, r, args=(r,self.a,self.b))[0]
         self._interp_mass *= (-1. * self.b**2 * self.Md)
+
+        # clean up
+        imax = np.argmax(self._interp_mass)
+        self._interp_mass[imax:] = self._interp_mass[imax]
+
         self._interp_lgr = np.log10(self._interp_rads)
         self._interp_lgM = np.log10(self._interp_mass)
+
         self.Minterp = lambda R,z: _M_MN(R,z,self._interp_lgr,self._interp_lgM)
 
     def s1sqr(self,z):

@@ -138,7 +138,12 @@ sigma_grid = co.sigma(10.**lgM_grid,z=0.,**cosmo)
 sigmalgM_interp = interp1d(lgM_grid, sigma_grid, kind='linear')
 @vectorize([float64(float64)],nopython=True)
 def sigmaM_interp(M):
-    f = (np.log10(M)-lgM_grid[0])/(lgM_grid[-1]-lgM_grid[0]) * (len(lgM_grid)-1)
+    lgM = np.log10(M)
+    if lgM < lgM_grid[0]:
+        lgM = lgM_grid[0]
+    elif lgM > lgM_grid[-1]-eps:
+        lgM = lgM_grid[-1]-eps
+    f = (lgM-lgM_grid[0])/(lgM_grid[-1]-lgM_grid[0]) * (len(lgM_grid)-1)
     i = int(f)
     f -= i
     return sigma_grid[i] * (1-f) + sigma_grid[i+1] * f
@@ -184,7 +189,12 @@ ures_grid = 10**lgures_grid
 J_grid = co.J_vec(ures_grid)
 @vectorize([float64(float64)],nopython=True)
 def Jures_interp(ures):
-    f = (np.log10(ures)-lgures_grid[0])/(lgures_grid[-1]-lgures_grid[0]) * (len(lgures_grid)-1)
+    lgures = np.log10(ures)
+    if lgures < lgures_grid[0]:
+        lgures = lgures_grid[0]
+    elif lgures > lgures_grid[-1]-eps:
+        lgures = lgures_grid[-1]-eps
+    f = (lgures-lgures_grid[0])/(lgures_grid[-1]-lgures_grid[0]) * (len(lgures_grid)-1)
     i = int(f)
     #f -= i
     f = (ures - ures_grid[i]) / (ures_grid[i+1] - ures_grid[i])
