@@ -26,6 +26,7 @@ import numpy as np
 import sys
 import os 
 import time 
+import pickle
 from scipy.optimize import brentq
 
 # <<< for clean on-screen prints, use with caution, make sure that 
@@ -94,48 +95,93 @@ def loop(file):
         return
         #continue
 
-    time_start_tmp = time.time()  
-    
-    #---load trees
-    f = np.load(file)
-    redshift = f['redshift']
-    CosmicTime = f['CosmicTime']
-    mass = f['mass']
-    order = f['order']
-    ParentID = f['ParentID']
-    VirialRadius = f['VirialRadius']
-    concentration = f['concentration']
-    coordinates = f['coordinates']
+    try: os.mkdir(outdir + '/tmp/')
+    except: pass
 
-    # compute the virial overdensities for all redshifts
-    VirialOverdensity = co.DeltaBN(redshift, cfg.Om, cfg.OL) # same as Dvsample
-    GreenRte = np.zeros(VirialRadius.shape) - 99. # contains r_{te} values
-    alphas = np.zeros(VirialRadius.shape) - 99.
-    tdyns  = np.zeros(VirialRadius.shape) - 99.
+    tmpfile = outdir + '/tmp/' + file[len(datadir):-4] + '.tmp'
+    tmpfile2 = outdir + '/tmp/' + file[len(datadir):-4] + '.tmp2'
+    if(os.path.exists(tmpfile)):
+        for _tmpfile in [tmpfile,tmpfile2]:
+            print('reading ' + _tmpfile)
+            try:
+                with open(_tmpfile, 'rb') as fp:
+                    tmpdata = pickle.load(fp)
+                    redshift = tmpdata['redshift']
+                    CosmicTime = tmpdata['CosmicTime']
+                    mass = tmpdata['mass']
+                    order = tmpdata['order']
+                    ParentID = tmpdata['ParentID']
+                    VirialRadius = tmpdata['VirialRadius']
+                    GreenRte = tmpdata['GreenRte']
+                    concentration = tmpdata['concentration']
+                    coordinates = tmpdata['coordinates']
+                    VirialOverdensity = tmpdata['VirialOverdensity']
+                    alphas = tmpdata['alphas']
+                    tdyns = tmpdata['tdyns']
+                    izroot = tmpdata['izroot']
+                    idx = tmpdata['idx']
+                    levels = tmpdata['levels']
+                    izmax = tmpdata['iznext']
+                    cfg.Rres = tmpdata['Rres']
+                    potentials = tmpdata['potentials']
+                    orbits = tmpdata['orbits']
+                    trelease = tmpdata['trelease']
+                    ejected_mass = tmpdata['ejected_mass']
+                    M0 = tmpdata['M0']
+                    min_mass = tmpdata['min_mass']
+                    time_start_tmp = time.time() - tmpdata['time_elapsed']
+                    np.random.set_state(tmpdata['rng_state'])
+                break
+            except Exception as err:
+                print(err)
+                continue
+        else:
+            raise Exception('Failed to load progress')
+    else:
+				time_start_tmp = time.time()  
+				
+				#---load trees
+				f = np.load(file)
+				redshift = f['redshift']
+				CosmicTime = f['CosmicTime']
+				mass = f['mass']
+				order = f['order']
+				ParentID = f['ParentID']
+				VirialRadius = f['VirialRadius']
+				concentration = f['concentration']
+				coordinates = f['coordinates']
 
-    #---identify the roots of the branches
-    izroot = mass.argmax(axis=1) # root-redshift ids of all the branches
-    idx = np.arange(mass.shape[0]) # branch ids of all the branches
-    levels = np.unique(order[order>=0]) # all >0 levels in the tree
-    izmax = mass.shape[1] - 1 # highest redshift index
+				# compute the virial overdensities for all redshifts
+				VirialOverdensity = co.DeltaBN(redshift, cfg.Om, cfg.OL) # same as Dvsample
+				GreenRte = np.zeros(VirialRadius.shape) - 99. # contains r_{te} values
+				alphas = np.zeros(VirialRadius.shape) - 99.
+				tdyns  = np.zeros(VirialRadius.shape) - 99.
 
-    #---get smallest host rvir from tree
-    #   Defunct, we no longer use an Rres; all subhaloes are evolved
-    #   until their mass falls below resolution limit
-    min_rvir = VirialRadius[0, np.argwhere(VirialRadius[0,:] > 0)[-1][0]]
-    cfg.Rres = min(0.1, min_rvir * Rres_factor) # Never larger than 100 pc
+				#---identify the roots of the branches
+				izroot = mass.argmax(axis=1) # root-redshift ids of all the branches
+				idx = np.arange(mass.shape[0]) # branch ids of all the branches
+				levels = np.unique(order[order>=0]) # all >0 levels in the tree
+				izmax = mass.shape[1] - 1 # highest redshift index
 
-    #---list of potentials and orbits for each branch
-    #   additional, mass of ejected subhaloes stored in ejected_mass
-    #   to be removed from corresponding host at next timestep
-    potentials = [0] * mass.shape[0]
-    orbits = [0] * mass.shape[0]
-    trelease = np.zeros(mass.shape[0])
-    ejected_mass = np.zeros(mass.shape[0])
+				#---get smallest host rvir from tree
+				#   Defunct, we no longer use an Rres; all subhaloes are evolved
+				#   until their mass falls below resolution limit
+				min_rvir = VirialRadius[0, np.argwhere(VirialRadius[0,:] > 0)[-1][0]]
+				cfg.Rres = min(0.1, min_rvir * Rres_factor) # Never larger than 100 pc
 
-    #---list of minimum masses, below which we stop evolving the halo
-    M0 = mass[0,0]
-    min_mass = np.zeros(mass.shape[0])
+				#---list of potentials and orbits for each branch
+				#   additional, mass of ejected subhaloes stored in ejected_mass
+				#   to be removed from corresponding host at next timestep
+				potentials = [0] * mass.shape[0]
+				orbits = [0] * mass.shape[0]
+				trelease = np.zeros(mass.shape[0])
+				ejected_mass = np.zeros(mass.shape[0])
+
+				#---list of minimum masses, below which we stop evolving the halo
+				M0 = mass[0,0]
+				min_mass = np.zeros(mass.shape[0])
+
+    time_last_progress = time.time()
 
     #---evolve
     for iz in np.arange(izmax, 0, -1): # loop over time to evolve
@@ -145,6 +191,8 @@ def loop(file):
         tnext = CosmicTime[iznext]
         dt = tnext - tcurrent
         Dv = VirialOverdensity[iz]
+
+        print(file + ' -- z=%.2f'%z)
 
         for level in levels: #loop from low-order to high-order systems
             for id in idx: # loop over branches
@@ -384,6 +432,41 @@ def loop(file):
                             potentials[id] = NFW(mass[id,iz],concentration[id,iz],
                                                 Delta=VirialOverdensity[iz],z=redshift[iz])
 
+        if time.time() - time_last_progress >= 60.:
+            print('saving progress...')
+            # save temporary progress
+            try: os.rename(tmpfile,tmpfile2)
+            except: pass
+            with open(tmpfile, 'wb') as fp:
+                pickle.dump(dict(
+                        redshift = redshift,
+                        CosmicTime = CosmicTime,
+                        mass = mass,
+                        order = order,
+                        ParentID = ParentID,
+                        VirialRadius = VirialRadius,
+                        GreenRte = GreenRte,
+                        concentration = concentration,
+                        coordinates = coordinates,
+                        VirialOverdensity = VirialOverdensity,
+                        alphas = alphas,
+                        tdyns = tdyns,
+                        izroot = izroot,
+                        idx = idx,
+                        levels = levels,
+                        iznext = iznext,
+                        Rres = cfg.Rres,
+                        potentials = potentials,
+                        orbits = orbits,
+                        trelease = trelease,
+                        ejected_mass = ejected_mass,
+                        M0 = M0,
+                        min_mass = min_mass,
+                        time_elapsed = time.time() - time_start_tmp,
+                        rng_state = np.random.get_state(),
+                    ), fp, protocol=pickle.HIGHEST_PROTOCOL)
+            time_last_progress = time.time()
+
     #---output
     np.savez(outfile, 
         redshift = redshift,
@@ -398,6 +481,10 @@ def loop(file):
         concentration = concentration, # this is unchanged from TreeGen output
         coordinates = coordinates,
         )
+    try: os.remove(tmpfile)
+    except: pass
+    try: os.remove(tmpfile2)
+    except: pass
     
     #---on-screen prints
     m0 = mass[:,0][1:]

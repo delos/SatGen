@@ -380,6 +380,7 @@ def loop(file):
                         # different than SatEvo mass resolution by small delta
                         potentials[id] = NFW(mass[id,iz],concentration[id,iz],
                                              Delta=VirialOverdensity[iz],z=redshift[iz])
+
         if time.time() - time_last_progress >= 60.:
             print('saving progress...')
             # save temporary progress
