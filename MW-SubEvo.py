@@ -67,8 +67,6 @@ for filename in os.listdir(datadir):
         files.append(os.path.join(datadir, filename))
 files.sort()
 
-print(files)
-
 print('>>> Evolving subhaloes ...')
 
 #---
@@ -88,48 +86,78 @@ def loop(file):
         return
         #continue
 
-    time_start_tmp = time.time()  
-    
-    #---load trees
-    f = np.load(file)
-    redshift = f['redshift']
-    CosmicTime = f['CosmicTime']
-    mass = f['mass']
-    order = f['order']
-    ParentID = f['ParentID']
-    VirialRadius = f['VirialRadius']
-    concentration = f['concentration']
-    coordinates = f['coordinates']
+    try: os.mkdir(outdir + '/tmp/')
+    except: pass
 
-    # compute the virial overdensities for all redshifts
-    VirialOverdensity = co.DeltaBN(redshift, cfg.Om, cfg.OL) # same as Dvsample
-    GreenRte = np.zeros(VirialRadius.shape) - 99. # contains r_{te} values
-    alphas = np.zeros(VirialRadius.shape) - 99.
-    tdyns  = np.zeros(VirialRadius.shape) - 99.
+    tmpfile = outdir + '/tmp/' + file[len(datadir):]
+    if(os.path.exists(tmpfile)):
+				tmpdata = np.load(tmpfile)
+				redshift = tmpdata['redshift']
+				CosmicTime = tmpdata['CosmicTime']
+				mass = tmpdata['mass']
+				order = tmpdata['order']
+				ParentID = tmpdata['ParentID']
+				VirialRadius = tmpdata['VirialRadius']
+				GreenRte = tmpdata['GreenRte']
+				concentration = tmpdata['concentration']
+				coordinates = tmpdata['coordinates']
+				alphas = tmpdata['alphas']
+				tdyns = tmpdata['tdyns']
+				izroot = tmpdata['izroot']
+				idx = tmpdata['idx']
+				levels = tmpdata['levels']
+				izmax = tmpdata['iznext']
+				Rres = tmpdata['Rres']
+				potentials = tmpdata['potentials']
+				orbits = tmpdata['orbits']
+				trelease = tmpdata['trelease']
+				ejected_mass = tmpdata['ejected_mass']
+				M0 = tmpdata['M0']
+				min_mass = tmpdata['min_mass']
+        time_start_tmp = time.time() - tmpdata['time_elapsed']
+    else:
+				time_start_tmp = time.time()  
+				
+				#---load trees
+				f = np.load(file)
+				redshift = f['redshift']
+				CosmicTime = f['CosmicTime']
+				mass = f['mass']
+				order = f['order']
+				ParentID = f['ParentID']
+				VirialRadius = f['VirialRadius']
+				concentration = f['concentration']
+				coordinates = f['coordinates']
 
-    #---identify the roots of the branches
-    izroot = mass.argmax(axis=1) # root-redshift ids of all the branches
-    idx = np.arange(mass.shape[0]) # branch ids of all the branches
-    levels = np.unique(order[order>=0]) # all >0 levels in the tree
-    izmax = mass.shape[1] - 1 # highest redshift index
+				# compute the virial overdensities for all redshifts
+				VirialOverdensity = co.DeltaBN(redshift, cfg.Om, cfg.OL) # same as Dvsample
+				GreenRte = np.zeros(VirialRadius.shape) - 99. # contains r_{te} values
+				alphas = np.zeros(VirialRadius.shape) - 99.
+				tdyns  = np.zeros(VirialRadius.shape) - 99.
 
-    #---get smallest host rvir from tree
-    #   Defunct, we no longer use an Rres; all subhaloes are evolved
-    #   until their mass falls below resolution limit
-    min_rvir = VirialRadius[0, np.argwhere(VirialRadius[0,:] > 0)[-1][0]]
-    cfg.Rres = min(0.1, min_rvir * Rres_factor) # Never larger than 100 pc
+				#---identify the roots of the branches
+				izroot = mass.argmax(axis=1) # root-redshift ids of all the branches
+				idx = np.arange(mass.shape[0]) # branch ids of all the branches
+				levels = np.unique(order[order>=0]) # all >0 levels in the tree
+				izmax = mass.shape[1] - 1 # highest redshift index
 
-    #---list of potentials and orbits for each branch
-    #   additional, mass of ejected subhaloes stored in ejected_mass
-    #   to be removed from corresponding host at next timestep
-    potentials = [0] * mass.shape[0]
-    orbits = [0] * mass.shape[0]
-    trelease = np.zeros(mass.shape[0])
-    ejected_mass = np.zeros(mass.shape[0])
+				#---get smallest host rvir from tree
+				#   Defunct, we no longer use an Rres; all subhaloes are evolved
+				#   until their mass falls below resolution limit
+				min_rvir = VirialRadius[0, np.argwhere(VirialRadius[0,:] > 0)[-1][0]]
+				cfg.Rres = min(0.1, min_rvir * Rres_factor) # Never larger than 100 pc
 
-    #---list of minimum masses, below which we stop evolving the halo
-    M0 = mass[0,0]
-    min_mass = np.zeros(mass.shape[0])
+				#---list of potentials and orbits for each branch
+				#   additional, mass of ejected subhaloes stored in ejected_mass
+				#   to be removed from corresponding host at next timestep
+				potentials = [0] * mass.shape[0]
+				orbits = [0] * mass.shape[0]
+				trelease = np.zeros(mass.shape[0])
+				ejected_mass = np.zeros(mass.shape[0])
+
+				#---list of minimum masses, below which we stop evolving the halo
+				M0 = mass[0,0]
+				min_mass = np.zeros(mass.shape[0])
 
     #---evolve
     for iz in np.arange(izmax, 0, -1): # loop over time to evolve
@@ -334,6 +362,32 @@ def loop(file):
                         # different than SatEvo mass resolution by small delta
                         potentials[id] = NFW(mass[id,iz],concentration[id,iz],
                                              Delta=VirialOverdensity[iz],z=redshift[iz])
+        # save temporary progress
+        np.savez(tmpfile, 
+            redshift = redshift,
+            CosmicTime = CosmicTime,
+            mass = mass,
+            order = order,
+            ParentID = ParentID,
+            VirialRadius = VirialRadius,
+            GreenRte = GreenRte,
+            concentration = concentration,
+            coordinates = coordinates,
+						alphas = alphas,
+						tdyns = tdyns,
+						izroot = izroot,
+						idx = idx,
+						levels = levels,
+						iznext = iznext,
+						Rres = Rres,
+						potentials = potentials,
+						orbits = orbits,
+						trelease = trelease,
+						ejected_mass = ejected_mass,
+						M0 = M0,
+						min_mass = min_mass,
+            time_elapsed = time.time() - time_start_tmp,
+            )
 
     #---output
     np.savez(outfile, 
