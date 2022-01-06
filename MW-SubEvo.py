@@ -25,6 +25,7 @@ import numpy as np
 import sys
 import os 
 import time 
+import pickle
 
 # <<< for clean on-screen prints, use with caution, make sure that 
 # the warning is not prevalent or essential for the result
@@ -89,32 +90,45 @@ def loop(file):
     try: os.mkdir(outdir + '/tmp/')
     except: pass
 
-    tmpfile = outdir + '/tmp/' + file[len(datadir):]
+    tmpfile = outdir + '/tmp/' + file[len(datadir):-4] + '.tmp'
+    tmpfile2 = outdir + '/tmp/' + file[len(datadir):-4] + '.tmp2'
     if(os.path.exists(tmpfile)):
-        tmpdata = np.load(tmpfile)
-        redshift = tmpdata['redshift']
-        CosmicTime = tmpdata['CosmicTime']
-        mass = tmpdata['mass']
-        order = tmpdata['order']
-        ParentID = tmpdata['ParentID']
-        VirialRadius = tmpdata['VirialRadius']
-        GreenRte = tmpdata['GreenRte']
-        concentration = tmpdata['concentration']
-        coordinates = tmpdata['coordinates']
-        alphas = tmpdata['alphas']
-        tdyns = tmpdata['tdyns']
-        izroot = tmpdata['izroot']
-        idx = tmpdata['idx']
-        levels = tmpdata['levels']
-        izmax = tmpdata['iznext']
-        Rres = tmpdata['Rres']
-        potentials = tmpdata['potentials']
-        orbits = tmpdata['orbits']
-        trelease = tmpdata['trelease']
-        ejected_mass = tmpdata['ejected_mass']
-        M0 = tmpdata['M0']
-        min_mass = tmpdata['min_mass']
-        time_start_tmp = time.time() - tmpdata['time_elapsed']
+        for _tmpfile in [tmpfile,tmpfile2]:
+            print('reading ' + _tmpfile)
+            try:
+                with open(_tmpfile, 'rb') as fp:
+                    tmpdata = pickle.load(fp)
+                    redshift = tmpdata['redshift']
+                    CosmicTime = tmpdata['CosmicTime']
+                    mass = tmpdata['mass']
+                    order = tmpdata['order']
+                    ParentID = tmpdata['ParentID']
+                    VirialRadius = tmpdata['VirialRadius']
+                    GreenRte = tmpdata['GreenRte']
+                    concentration = tmpdata['concentration']
+                    coordinates = tmpdata['coordinates']
+                    VirialOverdensity = tmpdata['VirialOverdensity']
+                    alphas = tmpdata['alphas']
+                    tdyns = tmpdata['tdyns']
+                    izroot = tmpdata['izroot']
+                    idx = tmpdata['idx']
+                    levels = tmpdata['levels']
+                    izmax = tmpdata['iznext']
+                    cfg.Rres = tmpdata['Rres']
+                    potentials = tmpdata['potentials']
+                    orbits = tmpdata['orbits']
+                    trelease = tmpdata['trelease']
+                    ejected_mass = tmpdata['ejected_mass']
+                    M0 = tmpdata['M0']
+                    min_mass = tmpdata['min_mass']
+                    time_start_tmp = time.time() - tmpdata['time_elapsed']
+                    np.random.set_state(tmpdata['rng_state'])
+                break
+            except Exception as err:
+                print(err)
+                continue
+        else:
+            raise Exception('Failed to load progress')
     else:
         time_start_tmp = time.time()  
         
@@ -159,6 +173,8 @@ def loop(file):
         M0 = mass[0,0]
         min_mass = np.zeros(mass.shape[0])
 
+    time_last_progress = time.time()
+
     #---evolve
     for iz in np.arange(izmax, 0, -1): # loop over time to evolve
         iznext = iz - 1                
@@ -167,6 +183,8 @@ def loop(file):
         tnext = CosmicTime[iznext]
         dt = tnext - tcurrent
         Dv = VirialOverdensity[iz]
+
+        print(file + ' -- z=%.2f'%z)
 
         for level in levels: #loop from low-order to high-order systems
             for id in idx: # loop over branches
@@ -362,32 +380,40 @@ def loop(file):
                         # different than SatEvo mass resolution by small delta
                         potentials[id] = NFW(mass[id,iz],concentration[id,iz],
                                              Delta=VirialOverdensity[iz],z=redshift[iz])
-        # save temporary progress
-        np.savez(tmpfile, 
-            redshift = redshift,
-            CosmicTime = CosmicTime,
-            mass = mass,
-            order = order,
-            ParentID = ParentID,
-            VirialRadius = VirialRadius,
-            GreenRte = GreenRte,
-            concentration = concentration,
-            coordinates = coordinates,
-            alphas = alphas,
-            tdyns = tdyns,
-            izroot = izroot,
-            idx = idx,
-            levels = levels,
-            iznext = iznext,
-            Rres = Rres,
-            potentials = potentials,
-            orbits = orbits,
-            trelease = trelease,
-            ejected_mass = ejected_mass,
-            M0 = M0,
-            min_mass = min_mass,
-            time_elapsed = time.time() - time_start_tmp,
-            )
+        if time.time() - time_last_progress >= 60.:
+            print('saving progress...')
+            # save temporary progress
+            try: os.rename(tmpfile,tmpfile2)
+            except: pass
+            with open(tmpfile, 'wb') as fp:
+                pickle.dump(dict(
+                        redshift = redshift,
+                        CosmicTime = CosmicTime,
+                        mass = mass,
+                        order = order,
+                        ParentID = ParentID,
+                        VirialRadius = VirialRadius,
+                        GreenRte = GreenRte,
+                        concentration = concentration,
+                        coordinates = coordinates,
+                        VirialOverdensity = VirialOverdensity,
+                        alphas = alphas,
+                        tdyns = tdyns,
+                        izroot = izroot,
+                        idx = idx,
+                        levels = levels,
+                        iznext = iznext,
+                        Rres = cfg.Rres,
+                        potentials = potentials,
+                        orbits = orbits,
+                        trelease = trelease,
+                        ejected_mass = ejected_mass,
+                        M0 = M0,
+                        min_mass = min_mass,
+                        time_elapsed = time.time() - time_start_tmp,
+                        rng_state = np.random.get_state(),
+                    ), fp, protocol=pickle.HIGHEST_PROTOCOL)
+            time_last_progress = time.time()
 
     #---output
     np.savez(outfile, 
@@ -403,6 +429,10 @@ def loop(file):
         concentration = concentration, # this is unchanged from TreeGen output
         coordinates = coordinates,
         )
+    try: os.remove(tmpfile)
+    except: pass
+    try: os.remove(tmpfile2)
+    except: pass
     
     #---on-screen prints
     m0 = mass[:,0][1:]
