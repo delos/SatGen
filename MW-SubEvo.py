@@ -96,38 +96,52 @@ def loop(file):
     except: pass
 
     tmpfile = outdir + '/tmp/' + file[len(datadir):-4] + '.tmp'
+    tmpfile_p = outdir + '/tmp/' + file[len(datadir):-4] + '.tmp.pot'
+    tmpfile_o = outdir + '/tmp/' + file[len(datadir):-4] + '.tmp.orb'
+    tmpfile_z = outdir + '/tmp/' + file[len(datadir):-4] + '.tmp.npz'
     tmpfile2 = outdir + '/tmp/' + file[len(datadir):-4] + '.tmp2'
+    tmpfile2_p = outdir + '/tmp/' + file[len(datadir):-4] + '.tmp2.pot'
+    tmpfile2_o = outdir + '/tmp/' + file[len(datadir):-4] + '.tmp2.orb'
+    tmpfile2_z = outdir + '/tmp/' + file[len(datadir):-4] + '.tmp2.npz'
+
     if(os.path.exists(tmpfile)):
-        for _tmpfile in [tmpfile,tmpfile2]:
+        for _tmpfile,_tmpfile_p,_tmpfile_o,_tmpfile_z in zip(
+                [tmpfile,tmpfile2],[tmpfile_p,tmpfile2_p],[tmpfile_o,tmpfile2_o],[tmpfile_z,tmpfile2_z]
+                ):
             print('[%d] reading '%rank + _tmpfile)
             try:
                 with open(_tmpfile, 'rb') as fp:
                     tmpdata = pickle.load(fp)
-                    redshift = tmpdata['redshift']
-                    CosmicTime = tmpdata['CosmicTime']
-                    mass = tmpdata['mass']
-                    order = tmpdata['order']
-                    ParentID = tmpdata['ParentID']
-                    VirialRadius = tmpdata['VirialRadius']
-                    GreenRte = tmpdata['GreenRte']
-                    concentration = tmpdata['concentration']
-                    coordinates = tmpdata['coordinates']
-                    VirialOverdensity = tmpdata['VirialOverdensity']
-                    alphas = tmpdata['alphas']
-                    tdyns = tmpdata['tdyns']
-                    izroot = tmpdata['izroot']
-                    idx = tmpdata['idx']
-                    levels = tmpdata['levels']
                     izmax = tmpdata['iznext']
                     cfg.Rres = tmpdata['Rres']
-                    potentials = tmpdata['potentials']
-                    orbits = tmpdata['orbits']
-                    trelease = tmpdata['trelease']
-                    ejected_mass = tmpdata['ejected_mass']
                     M0 = tmpdata['M0']
-                    min_mass = tmpdata['min_mass']
                     time_start_tmp = time.time() - tmpdata['time_elapsed']
                     np.random.set_state(tmpdata['rng_state'])
+                with open(_tmpfile_p, 'rb') as fp:
+                    potentials = pickle.load(fp)
+                with open(_tmpfile_o, 'rb') as fp:
+                    orbits = pickle.load(fp)
+
+                tmpdata = np.load(_tmpfile_z)
+                redshift = tmpdata['redshift']
+                CosmicTime = tmpdata['CosmicTime']
+                mass = tmpdata['mass']
+                order = tmpdata['order']
+                ParentID = tmpdata['ParentID']
+                VirialRadius = tmpdata['VirialRadius']
+                GreenRte = tmpdata['GreenRte']
+                concentration = tmpdata['concentration']
+                coordinates = tmpdata['coordinates']
+                VirialOverdensity = tmpdata['VirialOverdensity']
+                alphas = tmpdata['alphas']
+                tdyns = tmpdata['tdyns']
+                izroot = tmpdata['izroot']
+                idx = tmpdata['idx']
+                levels = tmpdata['levels']
+                trelease = tmpdata['trelease']
+                ejected_mass = tmpdata['ejected_mass']
+                min_mass = tmpdata['min_mass']
+
                 break
             except Exception as err:
                 print('[%d] '%rank + str(err))
@@ -388,41 +402,54 @@ def loop(file):
                         potentials[id] = NFW(mass[id,iz],concentration[id,iz],
                                              Delta=VirialOverdensity[iz],z=redshift[iz])
 
-        print('[%d] Mass fraction of tree lost: %.1e' % lost_frac)
+        if lost_frac > 0.: print('[%d] Mass fraction of tree lost: %.1e' % (rank,lost_frac))
 
         if time.time() - time_last_progress >= 60.:
-            print('[%d] saving progress...'%rank)
             # save temporary progress
+            print('[%d] saving progress...'%rank)
+
             try: os.rename(tmpfile,tmpfile2)
             except: pass
+            try: os.rename(tmpfile_p,tmpfile2_p)
+            except: pass
+            try: os.rename(tmpfile_o,tmpfile2_o)
+            except: pass
+            try: os.rename(tmpfile_z,tmpfile2_z)
+            except: pass
+
             with open(tmpfile, 'wb') as fp:
                 pickle.dump(dict(
-                        redshift = redshift,
-                        CosmicTime = CosmicTime,
-                        mass = mass,
-                        order = order,
-                        ParentID = ParentID,
-                        VirialRadius = VirialRadius,
-                        GreenRte = GreenRte,
-                        concentration = concentration,
-                        coordinates = coordinates,
-                        VirialOverdensity = VirialOverdensity,
-                        alphas = alphas,
-                        tdyns = tdyns,
-                        izroot = izroot,
-                        idx = idx,
-                        levels = levels,
                         iznext = iznext,
                         Rres = cfg.Rres,
-                        potentials = potentials,
-                        orbits = orbits,
-                        trelease = trelease,
-                        ejected_mass = ejected_mass,
                         M0 = M0,
-                        min_mass = min_mass,
                         time_elapsed = time.time() - time_start_tmp,
                         rng_state = np.random.get_state(),
                     ), fp, protocol=pickle.HIGHEST_PROTOCOL)
+            with open(tmpfile_p, 'wb') as fp:
+                pickle.dump(potentials, fp, protocol=pickle.HIGHEST_PROTOCOL)
+            with open(tmpfile_o, 'wb') as fp:
+                pickle.dump(orbits, fp, protocol=pickle.HIGHEST_PROTOCOL)
+
+            np.savez(tmpfile_z,
+                    redshift = redshift,
+                    CosmicTime = CosmicTime,
+                    mass = mass,
+                    order = order,
+                    ParentID = ParentID,
+                    VirialRadius = VirialRadius,
+                    GreenRte = GreenRte,
+                    concentration = concentration,
+                    coordinates = coordinates,
+                    VirialOverdensity = VirialOverdensity,
+                    alphas = alphas,
+                    tdyns = tdyns,
+                    izroot = izroot,
+                    idx = idx,
+                    levels = levels,
+                    trelease = trelease,
+                    ejected_mass = ejected_mass,
+                    min_mass = min_mass,
+                )
             time_last_progress = time.time()
 
     #---output
