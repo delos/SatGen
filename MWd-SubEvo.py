@@ -37,6 +37,11 @@ warnings.simplefilter("ignore", UserWarning)
 
 from sys import argv
 
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
+size = comm.Get_size()
+rank = comm.Get_rank()
+
 ########################### user control ################################
 
 
@@ -76,7 +81,7 @@ for filename in os.listdir(datadir):
 files.sort()
 
 
-print('>>> Evolving subhaloes ...')
+print('[%d] >>> Evolving subhaloes ...'%rank)
 
 #---
 time_start = time.time()
@@ -102,7 +107,7 @@ def loop(file):
     tmpfile2 = outdir + '/tmp/' + file[len(datadir):-4] + '.tmp2'
     if(os.path.exists(tmpfile)):
         for _tmpfile in [tmpfile,tmpfile2]:
-            print('reading ' + _tmpfile)
+            print('[%d] reading '%rank + _tmpfile)
             try:
                 with open(_tmpfile, 'rb') as fp:
                     tmpdata = pickle.load(fp)
@@ -133,7 +138,7 @@ def loop(file):
                     np.random.set_state(tmpdata['rng_state'])
                 break
             except Exception as err:
-                print(err)
+                print('[%d] '%rank + str(err))
                 continue
         else:
             raise Exception('Failed to load progress')
@@ -192,7 +197,8 @@ def loop(file):
         dt = tnext - tcurrent
         Dv = VirialOverdensity[iz]
 
-        print(file + ' -- z=%.2f'%z)
+        print('[%d] '%rank + file + ' -- z=%.2f'%z)
+        lost_frac = 0.
 
         for level in levels: #loop from low-order to high-order systems
             for id in idx: # loop over branches
@@ -211,10 +217,11 @@ def loop(file):
                         # some edge case produces nan in velocities in TreeGen
                         # if so, print warning and mass fraction lost
                         if(np.any(np.isnan(xva))):
-                            print('    WARNING: NaNs detected in init xv of id %d'\
-                                % id)
-                            print('    Mass fraction of tree lost: %.1e'\
-                                % (ma/mass[0,0]))
+                            lost_frac += ma/mass[0,0]
+                            #print('[%d] WARNING: NaNs detected in init xv of id %d'\
+                            #    % (rank,id))
+                            #print('[%d] Mass fraction of tree lost: %.1e'\
+                            #    % (rank,ma/mass[0,0]))
                             mass[id,:] = -99.
                             coordinates[id,:,:] = 0.
                             idx = np.delete(idx, np.argwhere(idx == id)[0])
@@ -369,7 +376,7 @@ def loop(file):
                         # an lt assigned if they aren't evolved one step. This can
                         # be fixed by lowering the resolution limit of SubEvo
                         # relative to TreeGen by some tiny epsilon, say 0.05 dex
-                        print("No lt for id ", id, "iz ", iz, "masses ",
+                        print("[%d] No lt for id "%rank, id, "iz ", iz, "masses ",
                               np.log10(mass[id,iz]), np.log10(mass[id,iznext]), file)
                         return
 
@@ -432,8 +439,10 @@ def loop(file):
                             potentials[id] = NFW(mass[id,iz],concentration[id,iz],
                                                 Delta=VirialOverdensity[iz],z=redshift[iz])
 
+        print('[%d] Mass fraction of tree lost: %.1e' % lost_frac)
+
         if time.time() - time_last_progress >= 60.:
-            print('saving progress...')
+						print('[%d] saving progress...'%rank)
             # save temporary progress
             try: os.rename(tmpfile,tmpfile2)
             except: pass
@@ -497,17 +506,12 @@ def loop(file):
     z50 = redshift[iz50]
     
     time_end_tmp = time.time()
-    print('    %s: %5.2f min, z50=%5.2f,fsub=%8.5f'%\
-        (outfile,(time_end_tmp-time_start_tmp)/60., z50,fsub))
+    print('[%d] %s: %5.2f min, z50=%5.2f,fsub=%8.5f'%\
+        (rank,outfile,(time_end_tmp-time_start_tmp)/60., z50,fsub))
     sys.stdout.flush()
 
 #---for parallelization, comment for testing in serial mode
 if __name__ == "__main__":
-
-    from mpi4py import MPI
-    comm = MPI.COMM_WORLD
-    size = comm.Get_size()
-    rank = comm.Get_rank()
 
     nfiles = len(files)
 
@@ -516,9 +520,9 @@ if __name__ == "__main__":
     for i in range(rank*count,(rank+1)*count):
       if i >= nfiles:
         break
-      print('[MPI: worker %d on file %d/%d: %s]'%(rank,i,nfiles,files[i]),flush=True)
+			print('[%d] file %d/%d: %s'%(rank,i,nfiles,files[i]),flush=True)
       np.random.seed(i+85127)
       loop(files[i])
 
-time_end = time.time() 
-print('    total time: %5.2f hours'%((time_end - time_start)/3600.))
+		time_end = time.time() 
+		print('[%d] total time: %5.2f hours'%(rank,(time_end - time_start)/3600.))
