@@ -52,7 +52,7 @@ alpha_type = 'conc' # 'fixed' or 'conc'
 cfg.lnL_pref = 0.75 # Fiducial, but can also use 1.0
 
 #---evolution mode (resolution limit in m/m_{acc} or m/M_0)
-cfg.evo_mode = 'arbres' # or 'withering'
+cfg.evo_mode = 'withering' # or 'arbres'
 try: cfg.phi_res = float(argv[2])
 except: cfg.phi_res = 1e-5 # when cfg.evo_mode == 'arbres',
 #                        cfg.phi_res sets the lower limit in m/m_{acc}
@@ -404,7 +404,7 @@ def loop(file):
 
         if lost_frac > 0.: print('[%d] Mass fraction of tree lost: %.1e' % (rank,lost_frac))
 
-        if time.time() - time_last_progress >= 60.:
+        if time.time() - time_last_progress >= 3600.:
             # save temporary progress
             print('[%d] saving progress...'%rank)
 
