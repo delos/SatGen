@@ -392,7 +392,12 @@ def loop(file):
                         # relative to TreeGen by some tiny epsilon, say 0.05 dex
                         print("[%d] No lt for id "%rank, id, "iz ", iz, "masses ",
                               np.log10(mass[id,iz]), np.log10(mass[id,iznext]), file)
-                        return
+
+                        lost_frac += mass[id,izroot[id]]/mass[0,0]
+                        mass[id,:] = -99.
+                        coordinates[id,:,:] = 0.
+                        idx = np.delete(idx, np.argwhere(idx == id)[0])
+                        continue
 
                     # NOTE: We store tidal radius in lieu of virial radius
                     # for haloes after they start getting stripped

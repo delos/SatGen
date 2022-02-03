@@ -2151,8 +2151,9 @@ class MN(object):
 
         self._interp_lgr = np.log10(self._interp_rads)
         self._interp_lgM = np.log10(self._interp_mass)
-
-        self.Minterp = lambda R,z: _M_MN(R,z,self._interp_lgr,self._interp_lgM)
+    
+    def Minterp(self,R,z):
+        return _M_MN(R,z,self._interp_lgr,self._interp_lgM)
 
     def s1sqr(self,z):
         """
