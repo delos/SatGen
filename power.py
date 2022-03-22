@@ -103,8 +103,7 @@ if __name__ == '__main__':
     try:
         directory = argv[1]
     except:
-        print('python script.py <directory> [iz=0] [kmin=0.1,kmax=100,nk=100] [phi_res]')
-        raise
+        raise Exception('python script.py <directory> [iz=0] [kmin=0.1,kmax=100,nk=100] [phi_res]')
     
     try: iz = int(argv[2])
     except: iz = 0
@@ -139,7 +138,7 @@ if __name__ == '__main__':
         #ig = ig & (data['order'][:,iz] == 1)
 
         # write
-        np.savez(directory + '/power' + os.path.basename(file)[4:],
+        np.savez(directory + '/power' + os.path.basename(file)[4:-4] + '_%d.npz'%iz,
                  k=k, power=p[ig], R=data['coordinates'][ig,iz,0],
                  z=data['coordinates'][ig,iz,2], redshift=data['redshift'][iz],
                  order=data['order'][ig,iz], ParentID=ParentID, mass=data['mass'][ig,iz], )
