@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from numba import vectorize, float64
 
@@ -15,7 +16,8 @@ log_fb_vals_int = np.log(fb_vals_int)
 log_k_vals_int  = np.log(k_vals_int)
 log_cs_vals_int = np.log(cs_vals_int)
   
-log_power_tab = np.log(np.load('etc/gvdb_power.npy'))
+power_tab_file = os.path.join(os.path.dirname(__file__),'etc/gvdb_power.npy')
+log_power_tab = np.log(np.load(power_tab_file))
 
 
 @vectorize([float64(float64,float64,float64)],nopython=True)
@@ -108,8 +110,13 @@ if __name__ == '__main__':
     try: iz = int(argv[2])
     except: iz = 0
 
-    try: kmin, kmax, nk = [float(x) for x in argv[3].split(',')]
-    except: kmin, kmax, nk = 0.1, 100., 100
+    try:
+      tmp = argv[3].split(',')
+      kmin = float(tmp[0])
+      kmax = float(tmp[1])
+      nk = int(tmp[2])
+    except:
+      kmin, kmax, nk = 0.1, 100., 100
     k = np.geomspace(kmin,kmax,nk)
 
     try: phi_res = float(argv[4])
@@ -123,7 +130,11 @@ if __name__ == '__main__':
         p = power(k,iz,data['mass'],data['concentration'],data['VirialRadius'],phi_res=phi_res)
 
         # don't write neglected halos
-        ig = p.any(axis=1)
+        if phi_res is not None:
+          mmin = data['mass'][0,0] * phi_res
+        else:
+          mmin = 0.
+        ig = p.any(axis=1)&(data['mass'][:,iz]>=mmin)
         
         # map indices
         nh = p.shape[0]
@@ -139,7 +150,10 @@ if __name__ == '__main__':
 
         # write
         np.savez(directory + '/power' + os.path.basename(file)[4:-4] + '_%d.npz'%iz,
-                 k=k, power=p[ig], R=data['coordinates'][ig,iz,0],
-                 z=data['coordinates'][ig,iz,2], redshift=data['redshift'][iz],
-                 order=data['order'][ig,iz], ParentID=ParentID, mass=data['mass'][ig,iz], )
+                 k=k, power=p[ig],
+                 pos=data['coordinates'][ig,iz,:3],
+                 vel=data['coordinates'][ig,iz,3:],
+                 redshift=data['redshift'][iz],
+                 order=data['order'][ig,iz], ParentID=ParentID,
+                 mass=data['mass'][ig,iz], )
 
