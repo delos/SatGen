@@ -91,7 +91,7 @@ def rhokfun(k,iz,i0,mass,concentration,VirialRadius,phi_res=None):
     ib = ib | np.isclose(phi_res,fb)
 
     # shape (N_halo, N_k)
-    rhok = np.zeros((m0.size,k.size))
+    rhok = np.zeros((m0.size,k.size),dtype=np.float32)
     rhok[~ib] = m0[~ib][:,None]*interp(fb[~ib][:,None],ch[~ib][:,None],rh[~ib][:,None]*k[None,:])
 
     return rhok # still need to square, sum over halos, and divide by spatial volume
@@ -113,7 +113,7 @@ def rhokfun0(k,iz,i0,mass,concentration,VirialRadius):
     rh = VirialRadius[i0_vec]
     
     # shape (N_halo, N_k)
-    rhok = np.zeros((m0.size,k.size))
+    rhok = np.zeros((m0.size,k.size),dtype=np.float32)
     rhok[~ib] = m0[~ib][:,None]*interp(1.,ch[~ib][:,None],rh[~ib][:,None]*k[None,:])
 
     return rhok # still need to square, sum over halos, and divide by spatial volume
@@ -167,7 +167,8 @@ if __name__ == '__main__':
                  pos=data['coordinates'][:,iz,:3],
                  vel=data['coordinates'][:,iz,3:],
                  redshift=data['redshift'][iz],
-                 order=data['order'][:,iz], ParentID=data['ParentID'][:,iz], mass=data['mass'][:,iz],
-                 order0=data['order'][i0_vec], ParentID0=data['ParentID'][i0_vec], mass0=data['mass'][i0_vec], 
+                 redshift0=data['redshift'][i0],
+                 order=data['order'][:,iz], parent=data['ParentID'][:,iz], mass=data['mass'][:,iz],
+                 order0=data['order'][i0_vec], parent0=data['ParentID'][i0_vec], mass0=data['mass'][i0_vec], 
                  )
 
